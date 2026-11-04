@@ -471,6 +471,13 @@ const loop=()=>{NOW=now();if(running){tt=frozen!=null?frozen:NOW-t0;frame(Math.m
 const ci=$('ci'),field=document.querySelector('.field');
 const busy=()=>running&&view==='live'&&!(tt>=T.END);
 const sendNow=txt=>{txt=(txt||ci.value||'').trim()||window.__rkPrompt;if(busy())return;
+  if(localStorage.getItem('trianon_mode')==='real'){
+    ci.value='';field.classList.remove('has');ci.blur();
+    const fromEmpty=view==='empty';
+    if(window.__real)window.__real.chat(txt);
+    showView('live',{exitEmpty:fromEmpty});
+    return;
+  }
   ci.value='';field.classList.remove('has');ci.blur();
   const fromEmpty=view==='empty';start(txt);
   const cs=curSlip();if(cs)cs.textContent=LIVE_TITLE;railOn(-1);
@@ -587,4 +594,780 @@ const boot=()=>{setCH();measure();
 window.__rk={get T(){return T},SCRIPT,DEC,frame,start,reset,decideA,decideQ,showView,newChat,sendNow,play,
   get t(){return tt},get t0(){return t0},get view(){return view},
   events:()=>SCRIPT.filter(e=>e[3]).map(([k,,,ev,p])=>({at:T[k],ev,...(p||{})}))};
+})();
+
+
+/* ================================ REAL MODE (Pure & Minimal Edition) ================================ */
+(() => {
+  let abortController = null;
+  let scrollScheduled = false;
+  let initialized = false;
+  
+  let settingsObserver = null;
+  let mdlObserver = null;
+  let modalAbort = null;
+  let mdlAbort = null;
+  let renderCatalogueFn = null;
+  let currentTabId = 'all';
+  let conversationHistory = [];
+
+  const initDOM = () => {
+    const thread = document.getElementById('thLive');
+    const scrollBox = document.getElementById('vLive');
+    return { thread, scrollBox };
+  };
+
+  // ================= 数据结构与存储 =================
+  const getData = () => {
+    const str = localStorage.getItem('trianon_workbench_data');
+    if (!str) return { providers: [], activeModel: null };
+    try { return JSON.parse(str); } catch(e) { return { providers: [], activeModel: null }; }
+  };
+
+  const saveData = (data) => {
+    localStorage.setItem('trianon_workbench_data', JSON.stringify(data));
+    updateMainModelText();
+  };
+
+  const getActiveConfig = () => {
+    const data = getData();
+    if (data.providers.length === 0) return null;
+    
+    let provider = data.providers.find(p => p.id === data.activeModel?.providerId);
+    if (!provider || !provider.models.length) {
+      provider = data.providers[0];
+    }
+    if (!provider || !provider.models.length) return null;
+
+    let model = provider.models.find(m => m.id === data.activeModel?.modelId) || provider.models[0];
+    
+    if (!data.activeModel || data.activeModel.providerId !== provider.id || data.activeModel.modelId !== model.id) {
+      data.activeModel = { providerId: provider.id, modelId: model.id };
+      saveData(data);
+    }
+    
+    return { provider, model };
+  };
+
+  const updateMainModelText = () => {
+    const config = getActiveConfig();
+    const mcM = document.getElementById('mcM');
+    if (mcM) {
+      mcM.textContent = config ? config.model.name : '未选择模型';
+    }
+  };
+
+  // ================= UI 接管：全屏页面 (#mdl) =================
+  const setupCataloguePage = () => {
+    if (mdlObserver) return;
+    const mdl = document.getElementById('mdl');
+    if (!mdl) return;
+
+    if (mdlAbort) mdlAbort.abort();
+    mdlAbort = new AbortController();
+
+    const mdIn = document.getElementById('mdIn');
+    if (mdIn) {
+      mdIn.addEventListener('input', () => {
+        if (renderCatalogueFn) renderCatalogueFn();
+      }, { signal: mdlAbort.signal });
+    }
+
+    renderCatalogueFn = () => {
+      const currentMdl = document.getElementById('mdl');
+      if (!currentMdl) return;
+      
+      const currentMdIn = document.getElementById('mdIn');
+      const keyword = (currentMdIn?.value || '').toLowerCase().trim();
+      
+      const data = getData();
+      if (currentTabId !== 'all' && !data.providers.some(p => p.id === currentTabId)) {
+        currentTabId = 'all';
+      }
+      
+      const mdTabs = document.getElementById('mdTabs');
+      const mdList = document.getElementById('mdList');
+      if (!mdTabs || !mdList) return;
+
+      // 1. Tabs
+      mdTabs.innerHTML = '';
+      const createTab = (id, label) => {
+        const tab = document.createElement('div');
+        tab.className = 'ptab' + (currentTabId === id ? ' on' : '');
+        tab.textContent = label;
+        tab.onclick = () => { currentTabId = id; renderCatalogueFn(); };
+        mdTabs.appendChild(tab);
+      };
+
+      createTab('all', '全部');
+      data.providers.forEach(p => createTab(p.id, p.name));
+
+      const addBtn = document.createElement('div');
+      addBtn.className = 'ptab';
+      addBtn.textContent = '+';
+      addBtn.title = '添加新 API';
+      addBtn.style.fontSize = '18px';
+      addBtn.style.fontWeight = 'bold';
+      addBtn.onclick = () => openConfigModal();
+      mdTabs.appendChild(addBtn);
+
+      // 2. List
+      mdList.innerHTML = '';
+      if (data.providers.length === 0) {
+        const empty = document.createElement('div');
+        empty.style.cssText = 'padding: 20px; color: #7C8DB5; text-align: center;';
+        empty.textContent = '暂无模型，请点击 + 号添加 API';
+        mdList.appendChild(empty);
+      } else {
+        let hasVisible = false;
+        data.providers.forEach(p => {
+          if (currentTabId !== 'all' && p.id !== currentTabId) return;
+
+          p.models.forEach(m => {
+            if (keyword && !m.id.toLowerCase().includes(keyword) && !m.name.toLowerCase().includes(keyword) && !p.name.toLowerCase().includes(keyword)) return;
+            hasVisible = true;
+
+            const row = document.createElement('div');
+            row.className = 'md-row';
+            const isActive = data.activeModel && data.activeModel.providerId === p.id && data.activeModel.modelId === m.id;
+            if (isActive) {
+              row.classList.add('on');
+              row.setAttribute('aria-selected', 'true');
+            } else {
+              row.setAttribute('aria-selected', 'false');
+            }
+
+            const txDiv = document.createElement('div');
+            txDiv.className = 'md-tx';
+            const b = document.createElement('b');
+            b.textContent = m.name;
+            const metaDiv = document.createElement('div');
+            metaDiv.className = 'md-meta';
+            const spanP = document.createElement('span');
+            spanP.textContent = p.name;
+            const sep1 = document.createElement('i');
+            sep1.className = 'sep';
+            const spanM = document.createElement('span');
+            spanM.textContent = m.id;
+            metaDiv.appendChild(spanP);
+            metaDiv.appendChild(sep1);
+            metaDiv.appendChild(spanM);
+            txDiv.appendChild(b);
+            txDiv.appendChild(metaDiv);
+            row.appendChild(txDiv);
+
+            // 右侧操作区：只有选中时才显示对勾，其余什么都不显示
+            const actionDiv = document.createElement('div');
+            actionDiv.style.cssText = 'display: flex; align-items: center; margin-left: auto; margin-right: 12px; width: 20px; height: 20px;';
+            
+            if (isActive) {
+              const checkSvg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+              checkSvg.setAttribute('width', '20');
+              checkSvg.setAttribute('height', '20');
+              checkSvg.setAttribute('viewBox', '0 0 24 24');
+              checkSvg.setAttribute('fill', 'none');
+              checkSvg.setAttribute('stroke', '#2E3B68');
+              checkSvg.setAttribute('stroke-width', '2.5');
+              checkSvg.setAttribute('stroke-linecap', 'round');
+              checkSvg.setAttribute('stroke-linejoin', 'round');
+              checkSvg.innerHTML = '<polyline points="20 6 9 17 4 12"></polyline>';
+              actionDiv.appendChild(checkSvg);
+            }
+            row.appendChild(actionDiv);
+
+            row.onclick = () => {
+              const newData = getData();
+              newData.activeModel = { providerId: p.id, modelId: m.id };
+              saveData(newData);
+              renderCatalogueFn();
+              document.getElementById('mdl')?.setAttribute('aria-hidden', 'true');
+            };
+            mdList.appendChild(row);
+          });
+        });
+
+        if (!hasVisible) {
+          const empty = document.createElement('div');
+          empty.style.cssText = 'padding: 20px; color: #7C8DB5; text-align: center;';
+          empty.textContent = keyword ? '没有找到匹配的模型' : '该分组暂无模型';
+          mdList.appendChild(empty);
+        }
+      }
+    };
+
+    mdlObserver = new MutationObserver((mutations) => {
+      for (let m of mutations) {
+        if (m.attributeName === 'aria-hidden' && mdl.getAttribute('aria-hidden') === 'false') {
+          renderCatalogueFn();
+        }
+      }
+    });
+    mdlObserver.observe(mdl, { attributes: true });
+  };
+
+  // ================= UI 接管：小弹窗 (#mpop) =================
+  const setupSmallPopup = () => {
+    if (settingsObserver) return;
+    const mpop = document.getElementById('mpop');
+    if (!mpop) return;
+
+    const injectRows = () => {
+      const mv = document.getElementById('mpMv');
+      if (!mv) return;
+      
+      mv.querySelectorAll('.mp-row, .tri-preset-row').forEach(el => el.remove());
+      const data = getData();
+      const active = data.activeModel;
+      const header = mv.querySelector('.mp-hd');
+      const targetNode = header ? header.nextSibling : mv.firstChild;
+
+      if (data.providers.length === 0) {
+        const emptyDiv = document.createElement('div');
+        emptyDiv.className = 'mp-c tri-preset-row';
+        emptyDiv.style = "color: #7C8DB5; font-size: 13px; padding: 12px 16px; text-align: center;";
+        emptyDiv.textContent = "暂无模型，请在“更多模型”中配置";
+        mv.insertBefore(emptyDiv, targetNode);
+      } else {
+        // 把保存的模型全列出来，方便快速切
+        data.providers.forEach(p => {
+          p.models.forEach(m => {
+            const row = document.createElement('div');
+            row.className = 'mp-c mp-row tri-preset-row';
+            row.setAttribute('role', 'menuitemradio');
+            const isActive = active && active.providerId === p.id && active.modelId === m.id;
+            row.setAttribute('aria-checked', isActive ? 'true' : 'false');
+            if (isActive) row.classList.add('on');
+            row.style.cursor = 'pointer';
+
+            const b = document.createElement('b');
+            b.textContent = m.name;
+            row.appendChild(b);
+
+            row.onclick = () => {
+              const newData = getData();
+              newData.activeModel = { providerId: p.id, modelId: m.id };
+              saveData(newData);
+              mpop.setAttribute('aria-hidden', 'true');
+              mpop.classList.remove('on');
+            };
+            mv.insertBefore(row, targetNode);
+          });
+        });
+      }
+    };
+
+    settingsObserver = new MutationObserver((mutations) => {
+      for (let m of mutations) {
+        if (m.attributeName === 'aria-hidden' && mpop.getAttribute('aria-hidden') === 'false') {
+          injectRows();
+        }
+      }
+    });
+    settingsObserver.observe(mpop, { attributes: true });
+  };
+
+  // ================= UI：API 配置弹窗 =================
+  const openConfigModal = () => {
+    if (document.getElementById('tri-config-modal')) return;
+    if (modalAbort) modalAbort.abort();
+    modalAbort = new AbortController();
+
+    let isManualMode = false;
+    let fetching = false;
+
+    const modal = document.createElement('div');
+    modal.id = 'tri-config-modal';
+    modal.style.cssText = `
+      position: fixed; inset: 0; background: rgba(40, 50, 79, 0.6); backdrop-filter: blur(8px);
+      z-index: 2147483647; display: flex; justify-content: center; align-items: center;
+    `;
+
+    const inner = document.createElement('div');
+    inner.style.cssText = "background: linear-gradient(rgb(240, 244, 250), rgb(227, 233, 243)); width: 90%; max-width: 600px; border-radius: 20px; padding: 24px; box-shadow: 0 10px 40px rgba(0,0,0,0.2); border: 1.2px solid #fff; max-height: 90vh; overflow-y: auto;";
+    
+    inner.innerHTML = `
+      <h3 style="margin: 0 0 16px 0; color: #2E3B68; font-family: serif; display:flex; justify-content:space-between;">
+        <span>添加 API 分组</span><span id="tri-modal-close" style="cursor:pointer; font-size:16px; color:#7C8DB5;">✕</span>
+      </h3>
+      
+      <div id="tri-config-error" style="color: #D32F2F; font-size: 12px; margin-bottom: 10px; display: none;"></div>
+
+      <div style="background: rgba(255,255,255,0.5); padding: 16px; border-radius: 12px; border: 1px solid rgba(124,147,186,.2); margin-bottom: 16px;">
+        <div style="display:flex; gap:10px; margin-bottom:10px;">
+          <input type="text" id="tri-add-name" placeholder="分组名称 (如: 中转站A)" style="flex:1; padding:8px; border-radius:6px; border:1px solid #ccc; font-size:13px;">
+          <input type="text" id="tri-add-baseurl" placeholder="Base URL (https://...)" style="flex:1; padding:8px; border-radius:6px; border:1px solid #ccc; font-size:13px;">
+        </div>
+        <input type="password" id="tri-add-apikey" placeholder="API Key" style="width:100%; margin-bottom:10px; padding:8px; border-radius:6px; border:1px solid #ccc; font-size:13px; box-sizing:border-box;">
+        <button type="button" id="tri-btn-fetch" style="width:100%; padding:10px; background:#E8EEF5; color:#2E3B68; border:none; border-radius:8px; cursor:pointer; font-size:14px;">拉取模型列表</button>
+      </div>
+
+      <div id="tri-model-checkboxes" style="display: none; background: rgba(255,255,255,0.5); padding: 16px; border-radius: 12px; border: 1px solid rgba(124,147,186,.2); margin-bottom: 16px; max-height: 200px; overflow-y: auto;">
+        <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:10px;">
+          <h4 style="margin: 0; font-size: 14px; color:#2E3B68;">勾选需要的模型：</h4>
+          <span id="tri-toggle-all" style="cursor:pointer; color:#7F93BC; font-size:13px; font-weight:bold; user-select:none;">全选</span>
+        </div>
+        <div id="tri-model-list-container" style="display: flex; flex-direction: column; gap: 8px;"></div>
+      </div>
+
+      <div id="tri-manual-add" style="display: none; background: rgba(255,255,255,0.5); padding: 16px; border-radius: 12px; border: 1px solid rgba(124,147,186,.2); margin-bottom: 16px;">
+        <h4 style="margin: 0 0 10px 0; font-size: 14px; color:#2E3B68;">手动添加模型 ID (每行一个)：</h4>
+        <textarea id="tri-manual-models" style="width:100%; height:80px; padding:8px; border-radius:6px; border:1px solid #ccc; font-size:13px; box-sizing:border-box; resize:vertical;"></textarea>
+      </div>
+
+      <div style="display:flex; gap:10px;">
+        <button type="button" id="tri-btn-manual" style="flex:1; padding:10px; background:#E8EEF5; color:#2E3B68; border:none; border-radius:8px; cursor:pointer; font-size:14px;">无法拉取？手动填写</button>
+        <button type="button" id="tri-btn-save" style="flex:1; padding:10px; background:#7F93BC; color:#fff; border:none; border-radius:8px; cursor:pointer; font-size:14px;">保存分组</button>
+      </div>
+    `;
+
+    modal.appendChild(inner);
+    document.body.appendChild(modal);
+
+    const errEl = document.getElementById('tri-config-error');
+    const showError = (msg) => { errEl.textContent = msg; errEl.style.display = 'block'; };
+    const clearError = () => { errEl.style.display = 'none'; };
+
+    const isFormDirty = () => {
+      return ['tri-add-name', 'tri-add-baseurl', 'tri-add-apikey', 'tri-manual-models']
+        .some(id => (document.getElementById(id)?.value || '').trim() !== '');
+    };
+
+    const closeModal = (force = false) => {
+      const isForce = force === true;
+      if (!isForce && isFormDirty()) {
+        if (!confirm('表单有未保存的内容，确定关闭吗？')) return;
+      }
+      if (modalAbort) { modalAbort.abort(); modalAbort = null; }
+      modal.remove();
+    };
+
+    document.getElementById('tri-modal-close').onclick = () => closeModal();
+
+    modal.addEventListener('click', (e) => {
+      if (e.target === modal) closeModal();
+    }, { signal: modalAbort.signal });
+
+    document.addEventListener('keydown', (e) => {
+      if (e.key === 'Escape' && document.getElementById('tri-config-modal')) closeModal();
+    }, { signal: modalAbort.signal });
+
+    document.getElementById('tri-btn-fetch').onclick = async () => {
+      if (fetching) return;
+      clearError();
+      
+      const baseURL = document.getElementById('tri-add-baseurl').value.trim();
+      const apiKey = document.getElementById('tri-add-apikey').value.trim();
+      if (!baseURL || !apiKey) return showError("请先填写 Base URL 和 API Key");
+
+      try {
+        fetching = true;
+        const btn = document.getElementById('tri-btn-fetch');
+        btn.textContent = '拉取中...';
+        btn.disabled = true;
+
+        const url = baseURL.replace(/\/+$/, '') + '/models';
+        const res = await fetch(url, { 
+          headers: { 'Authorization': `Bearer ${apiKey}` },
+          signal: modalAbort.signal
+        });
+        if (!res.ok) throw new Error("HTTP " + res.status);
+        const data = await res.json();
+        
+        const fetchedModels = data.data || [];
+        const container = document.getElementById('tri-model-list-container');
+        container.innerHTML = '';
+        const toggleBtn = document.getElementById('tri-toggle-all');
+
+        if (fetchedModels.length === 0) {
+          toggleBtn.style.display = 'none';
+          container.innerHTML = '<div style="color:#7C8DB5; font-size:12px; text-align:center;">该接口未返回任何模型，请使用手动填写</div>';
+        } else {
+          toggleBtn.style.display = '';
+          fetchedModels.forEach(m => {
+            const label = document.createElement('label');
+            label.style.cssText = 'display: flex; align-items: center; gap: 8px; font-size: 13px; color: #2E3B68; cursor: pointer;';
+            
+            const cb = document.createElement('input');
+            cb.type = 'checkbox';
+            cb.value = m.id;
+            cb.checked = false;
+            
+            label.appendChild(cb);
+            label.appendChild(document.createTextNode(' ' + m.id));
+            container.appendChild(label);
+          });
+
+          const checkboxes = container.querySelectorAll('input[type="checkbox"]');
+          
+          const updateToggleText = () => {
+            const total = checkboxes.length;
+            const checkedCount = Array.from(checkboxes).filter(cb => cb.checked).length;
+            toggleBtn.textContent = (total > 0 && checkedCount === total) ? '全不选' : '全选';
+          };
+
+          toggleBtn.onclick = () => {
+            const total = checkboxes.length;
+            const checkedCount = Array.from(checkboxes).filter(cb => cb.checked).length;
+            const targetState = !(total > 0 && checkedCount === total);
+            checkboxes.forEach(cb => cb.checked = targetState);
+            updateToggleText();
+          };
+
+          checkboxes.forEach(cb => cb.addEventListener('change', updateToggleText));
+          updateToggleText();
+        }
+
+        document.getElementById('tri-model-checkboxes').style.display = 'block';
+        document.getElementById('tri-manual-add').style.display = 'none';
+        isManualMode = false; 
+      } catch (e) {
+        if (e.name !== 'AbortError') {
+          showError("拉取失败，请检查网络或手动填写");
+          document.getElementById('tri-btn-manual').click();
+        }
+      } finally {
+        fetching = false;
+        const btn = document.getElementById('tri-btn-fetch');
+        if (btn) {
+          btn.textContent = '拉取模型列表';
+          btn.disabled = false;
+        }
+      }
+    };
+
+    document.getElementById('tri-btn-manual').onclick = () => {
+      isManualMode = true; 
+      document.getElementById('tri-model-checkboxes').style.display = 'none';
+      document.getElementById('tri-manual-add').style.display = 'block';
+    };
+
+    document.getElementById('tri-btn-save').onclick = () => {
+      clearError();
+      const name = document.getElementById('tri-add-name').value.trim();
+      const baseURL = document.getElementById('tri-add-baseurl').value.trim();
+      const apiKey = document.getElementById('tri-add-apikey').value.trim();
+
+      if (!name || !baseURL || !apiKey) return showError("名称、URL 和 Key 必须填写！");
+
+      let selectedModels = [];
+      if (isManualMode) {
+        const lines = document.getElementById('tri-manual-models').value.split('\n');
+        selectedModels = lines.map(l => l.trim()).filter(Boolean).map(id => ({ id, name: id }));
+      } else {
+        const checkedBoxes = document.querySelectorAll('#tri-model-list-container input:checked');
+        selectedModels = Array.from(checkedBoxes).map(cb => ({ id: cb.value, name: cb.value }));
+      }
+
+      if (selectedModels.length === 0) return showError("请至少选择一个模型");
+
+      const data = getData();
+      const newProvider = {
+        id: 'p_' + Date.now(),
+        name, baseURL, apiKey,
+        models: selectedModels
+      };
+      
+      data.providers.push(newProvider);
+      if (!data.activeModel) {
+        data.activeModel = { providerId: newProvider.id, modelId: selectedModels[0].id };
+      }
+      saveData(data);
+      
+      closeModal(true);
+      if (renderCatalogueFn) renderCatalogueFn();
+    };
+  };
+
+  const injectStyle = () => {
+    if (document.getElementById('real-mode-style')) return;
+    const style = document.createElement('style');
+    style.id = 'real-mode-style';
+    style.textContent = `
+      @keyframes realFadeIn {
+        from { opacity: 0; transform: translateY(6px); filter: blur(2px); }
+        to { opacity: 1; transform: translateY(0); filter: blur(0); }
+      }
+      #thLive { display: flex; flex-direction: column; padding: 20px 24px; }
+      .real-row { display: flex; width: 100%; margin-bottom: 24px; animation: realFadeIn 0.4s ease forwards; }
+      .real-row.u { justify-content: flex-end; }
+      .real-row.a { flex-direction: column; align-items: flex-start; }
+      
+      .real-bubble.u {
+        background: linear-gradient(rgb(253, 249, 251), rgb(244, 234, 238));
+        color: rgb(40, 50, 79); padding: 13px 24px;
+        border-radius: 30px 30px 4px 30px; font-size: 16px;
+        max-width: 75%; border: 1.2px solid rgba(220, 205, 210, 0.8);
+        box-shadow: rgb(255, 255, 255) 0px 0px 0px 4px inset, rgba(60, 72, 110, 0.2) 0px 14px 30px -20px;
+        position: relative; line-height: 1.6; word-break: break-word;
+      }
+      .real-bubble.u::after {
+        content: ""; position: absolute; right: -6px; bottom: 0;
+        width: 0; height: 0; border-bottom: 12px solid rgb(244, 234, 238); border-right: 12px solid transparent;
+      }
+      
+      .real-who {
+        color: #5B6C92; font-family: serif; letter-spacing: 3px;
+        font-size: 13px; margin-bottom: 8px; margin-left: 14px;
+      }
+      .real-bubble.a {
+        background: linear-gradient(rgb(227, 233, 243), rgb(216, 224, 236));
+        box-shadow: rgb(248, 250, 253) 0px 0px 0px 4px inset, rgba(60, 72, 110, 0.38) 0px 14px 30px -20px;
+        border: 1.21273px solid rgb(135, 150, 180); border-radius: 30px;
+        color: rgb(40, 50, 79); padding: 16px 28px 36px 28px;
+        font-size: 16px; width: 100%;
+        position: relative; line-height: 1.7; word-break: break-word;
+      }
+      .real-bubble.a::after {
+        content: "for 妁妁 only"; position: absolute; right: 24px; bottom: 12px;
+        font-family: serif; font-style: italic; color: rgba(120, 140, 180, 0.5); font-size: 13px;
+      }
+      .real-abort-hint { color: #889; font-size: 13px; margin-left: 8px; font-style: italic; }
+    `;
+    document.head.appendChild(style);
+  };
+
+  const scrollToBottom = (scrollBox, force = false) => {
+    if (!scrollBox) return;
+    if (force) { scrollBox.scrollTop = scrollBox.scrollHeight; return; }
+    if (scrollScheduled) return;
+    const isNearBottom = scrollBox.scrollHeight - scrollBox.scrollTop - scrollBox.clientHeight < 80;
+    if (!isNearBottom) return;
+    scrollScheduled = true;
+    requestAnimationFrame(() => {
+      scrollBox.scrollTop = scrollBox.scrollHeight;
+      scrollScheduled = false;
+    });
+  };
+
+  const appendText = (bubble, text, scrollBox) => {
+    if (text === undefined || text === null) return;
+    bubble.appendChild(document.createTextNode(text));
+    scrollToBottom(scrollBox);
+  };
+
+  const chat = async (userText) => {
+    if (!userText || !userText.trim()) return;
+    const { thread, scrollBox } = initDOM();
+    if (!thread) return;
+    
+    injectStyle();
+    setupCataloguePage();
+    setupSmallPopup();
+
+    const config = getActiveConfig();
+    if (!config) {
+      openConfigModal();
+      return;
+    }
+
+    if (abortController) abortController.abort();
+    const myCtrl = new AbortController();
+    abortController = myCtrl;
+
+    let uRow = null, aRow = null, myBubble = null, statusEl = null, aWho = null;
+    let history = conversationHistory;
+
+    try {
+      if (!initialized) {
+        thread.querySelectorAll('.row, .real-row').forEach(el => el.remove());
+        initialized = true;
+      }
+
+      uRow = document.createElement('div');
+      uRow.className = 'real-row u';
+      const uB = document.createElement('div');
+      uB.className = 'real-bubble u';
+      uRow.appendChild(uB);
+      thread.appendChild(uRow);
+      appendText(uB, userText, scrollBox);
+      scrollToBottom(scrollBox, true);
+
+      aRow = document.createElement('div');
+      aRow.className = 'real-row a';
+      aWho = document.createElement('div');
+      aWho.className = 'real-who';
+      
+      aWho.textContent = (config.model.name || 'K I M I').toUpperCase();
+
+      myBubble = document.createElement('div');
+      myBubble.className = 'real-bubble a';
+      aRow.appendChild(aWho);
+      aRow.appendChild(myBubble);
+      thread.appendChild(aRow);
+
+      statusEl = document.createElement('span');
+      statusEl.textContent = '思考中...';
+      statusEl.style.opacity = '0.5';
+      myBubble.appendChild(statusEl);
+
+      const workerURL = 'https://trianon-workbench.morning-mouse-3ac4.workers.dev/api/chat';
+
+      const nextMessages = [...history, { role: 'user', content: userText }];
+
+      const res = await fetch(workerURL, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ messages: nextMessages, baseURL: config.provider.baseURL, apiKey: config.provider.apiKey, model: config.model.id }),
+          signal: myCtrl.signal
+      });
+
+      if (!res.ok) {
+          const errText = await res.text();
+          const raw = errText || `HTTP ${res.status}`;
+          throw new Error(raw.length > 200 ? raw.slice(0, 200) + '…' : raw);
+      }
+
+      let fullReply = '';
+      let hasContent = false;
+
+      const handleLine = (line) => {
+          if (!line.startsWith('data:')) return;
+          const jsonStr = line.replace(/^data:\s*/, '').trim();
+          if (!jsonStr || jsonStr === '[DONE]') return;
+          try {
+              const data = JSON.parse(jsonStr);
+              const delta = data.choices?.[0]?.delta;
+              if (delta?.content) {
+                  if (!hasContent) {
+                      statusEl.remove();
+                      hasContent = true;
+                  }
+                  fullReply += delta.content;
+                  appendText(myBubble, delta.content, scrollBox);
+              }
+          } catch (e) {}
+      };
+
+      if (!res.body) {
+          let data;
+          try { data = await res.json(); }
+          catch { throw new Error('响应格式异常'); }
+          const text = data.choices?.[0]?.message?.content;
+          if (text) {
+              statusEl.remove();
+              appendText(myBubble, text, scrollBox);
+              conversationHistory = [...nextMessages, { role: 'assistant', content: text }];
+              if (conversationHistory.length > 40) conversationHistory = conversationHistory.slice(-40);
+          } else {
+              throw new Error('无法解析响应内容');
+          }
+          return;
+      }
+
+      const reader = res.body.getReader();
+      const decoder = new TextDecoder();
+      let buffer = '';
+
+      while (true) {
+          const { done, value } = await reader.read();
+          if (done) break;
+          buffer += decoder.decode(value, { stream: true });
+          const lines = buffer.split('\n');
+          buffer = lines.pop() || '';
+          for (const line of lines) handleLine(line);
+      }
+
+      buffer += decoder.decode();
+      for (const line of buffer.split('\n')) handleLine(line);
+
+      if (fullReply) {
+          conversationHistory = [...nextMessages, { role: 'assistant', content: fullReply }];
+          if (conversationHistory.length > 40) conversationHistory = conversationHistory.slice(-40);
+      } else if (!hasContent && statusEl.parentNode) {
+          statusEl.textContent = '（未返回内容）';
+      }
+
+    } catch (err) {
+      if (err.name === 'AbortError') {
+        if (aWho && aWho.isConnected) {
+            const hint = document.createElement('span');
+            hint.className = 'real-abort-hint';
+            hint.textContent = '· 已中断';
+            aWho.appendChild(hint);
+        }
+        if (statusEl && statusEl.parentNode) {
+            statusEl.textContent = '（已中断）';
+        }
+      } else {
+          console.error("Chat Error:", err);
+          if (statusEl && statusEl.parentNode) statusEl.remove();
+          if (myBubble) {
+              if (myBubble.childNodes.length > 0) {
+                  myBubble.appendChild(document.createElement('br'));
+              }
+              const errorSpan = document.createElement('div');
+              errorSpan.style.color = 'red';
+              errorSpan.style.fontSize = '14px';
+              errorSpan.style.marginTop = '6px';
+              errorSpan.style.paddingBottom = '10px';
+              errorSpan.textContent = '❌ 请求失败: ' + err.message;
+              myBubble.appendChild(errorSpan);
+          }
+      }
+    } finally {
+      if (abortController === myCtrl) {
+          abortController = null;
+      }
+    }
+  };
+
+  const destroy = () => {
+    if (abortController) {
+        abortController.abort();
+        abortController = null;
+    }
+    if (settingsObserver) {
+        settingsObserver.disconnect();
+        settingsObserver = null;
+    }
+    if (mdlObserver) {
+        mdlObserver.disconnect();
+        mdlObserver = null;
+    }
+    if (modalAbort) {
+        modalAbort.abort();
+        modalAbort = null;
+    }
+    if (mdlAbort) {
+        mdlAbort.abort();
+        mdlAbort = null;
+    }
+    const style = document.getElementById('real-mode-style');
+    if (style) style.remove();
+    const modal = document.getElementById('tri-config-modal');
+    if (modal) modal.remove();
+    const thread = document.getElementById('thLive');
+    if (thread) thread.querySelectorAll('.row, .real-row').forEach(el => el.remove());
+    
+    const mpopMv = document.getElementById('mpMv');
+    if (mpopMv) mpopMv.querySelectorAll('.tri-preset-row').forEach(el => el.remove());
+    
+    const mdTabs = document.getElementById('mdTabs');
+    const mdList = document.getElementById('mdList');
+    if (mdTabs) mdTabs.innerHTML = '';
+    if (mdList) mdList.innerHTML = '';
+    
+    renderCatalogueFn = null;
+    currentTabId = 'all';
+    
+    conversationHistory = [];
+    initialized = false;
+    scrollScheduled = false;
+  };
+
+  window.__real = { chat, destroy };
+  
+  if (document.readyState === 'loading') {
+    document.addEventListener('DOMContentLoaded', () => { 
+      injectStyle(); 
+      setupCataloguePage(); 
+      setupSmallPopup(); 
+      updateMainModelText(); 
+    });
+  } else {
+    injectStyle(); 
+    setupCataloguePage(); 
+    setupSmallPopup(); 
+    updateMainModelText();
+  }
 })();

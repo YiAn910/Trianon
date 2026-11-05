@@ -5982,16 +5982,17 @@ const sendNow=txt=>{if(window.__engBlock&&window.__engBlock())return;txt=(txt||c
   showView('live',{exitEmpty:fromEmpty})};
 ci.addEventListener('input',()=>field.classList.toggle('has',!!ci.value));
 (()=>{if(ci.tagName!=='TEXTAREA')return;const _sync=()=>{if(!ci.value.trim()){ci.style.height='22px';return;}ci.style.height='auto';ci.style.height=Math.min(Math.max(ci.scrollHeight,22),120)+'px'};['input','change','paste','focus'].forEach(ev=>ci.addEventListener(ev,()=>setTimeout(_sync,10)));window.addEventListener('resize',_sync);_sync()})();
-ci.addEventListener('keydown',e=>{if(e.key==='Enter'&&!e.shiftKey&&!e.isComposing){e.preventDefault();sendNow()}});
+ci.addEventListener('keydown',e=>{if(e.key==='Enter'&&(e.ctrlKey||e.metaKey)&&!e.isComposing){e.preventDefault();sendNow()}});
 field.addEventListener('click',e=>{if(!e.target.closest('.mchip,.pill'))ci.focus({preventScroll:true})});
 send.addEventListener('click',()=>sendNow());
 send.addEventListener('keydown',e=>{if(e.key==='Enter'||e.key===' '){e.preventDefault();sendNow()}});
 const PRE=['帮我整理一下这个仓库：目录、脚本和没用的依赖。',window.__rkPrompt,'随便聊聊：流式渲染最容易在哪儿卡住？'];
 V.empty.querySelectorAll('.tag').forEach((t,k)=>t.addEventListener('click',()=>sendNow(PRE[k])));
 let resetT=0;
-const newChat=()=>{ci.value='';field.classList.remove('has');const cs=curSlip();if(cs)cs.textContent='新的对话';railOn(0);
+const newChat=()=>{conversationHistory = []; try{localStorage.removeItem('trianon_current_history');}catch(e){} const thread=document.getElementById('thLive'); if(thread){thread.querySelectorAll('.real-row').forEach(el=>el.remove());} if(typeof initialized!=='undefined'){initialized=false;} ci.value='';field.classList.remove('has');const cs=curSlip();if(cs)cs.textContent='新的对话';railOn(0);
   const wasLive=view==='live';showView('empty');clearTimeout(resetT);
   if(wasLive&&!RM.matches)resetT=setTimeout(()=>{if(view!=='live')reset()},320);else reset()};
+window.newChat = newChat;
 railIts[0].addEventListener('click',newChat);
 $('drw').addEventListener('click',e=>{
   const ses=e.target.closest('.dw-ses');
@@ -6110,12 +6111,73 @@ window.__rk={hold:v=>{frozen=v},resume:v=>{frozen=null;t0=now()-v},get running()
   let renderCatalogueFn = null;
   let currentTabId = 'all';
   let conversationHistory = [];
+  try {
+    const savedHist = localStorage.getItem('trianon_current_history');
+    if (savedHist) {
+      conversationHistory = JSON.parse(savedHist);
+      // 如果上次没收到回复，直接把最后一条 user 消息切成孤儿并删除
+      if (conversationHistory.length > 0 && conversationHistory[conversationHistory.length - 1].role === 'user') {
+        conversationHistory.pop();
+        localStorage.setItem('trianon_current_history', JSON.stringify(conversationHistory));
+      }
+    }
+  } catch(e) {}
+
+  window.saveHistory = function() {
+    try {
+      localStorage.setItem('trianon_current_history', JSON.stringify(conversationHistory));
+    } catch(e) {}
+  };
 
   const initDOM = () => {
     const thread = document.getElementById('thLive');
     const scrollBox = document.getElementById('vLive');
     return { thread, scrollBox };
   };
+
+  const renderHistoryToUI = () => {
+    const { thread, scrollBox } = initDOM();
+    if (!thread || conversationHistory.length === 0) return;
+    thread.querySelectorAll('.row, .real-row').forEach(el => el.remove());
+    
+    conversationHistory.forEach(msg => {
+      if (msg.role === 'user') {
+        const uRow = document.createElement('div');
+        uRow.className = 'real-row u';
+        const uB = document.createElement('div');
+        uB.className = 'real-bubble u';
+        uB.textContent = msg.content;
+        uRow.appendChild(uB);
+        thread.appendChild(uRow);
+      } else if (msg.role === 'assistant') {
+        const aRow = document.createElement('div');
+        aRow.className = 'real-row a';
+        const aWho = document.createElement('div');
+        aWho.className = 'real-who';
+        aWho.textContent = 'K I M I';
+        const aB = document.createElement('div');
+        aB.className = 'real-bubble a';
+        // 调用现有的 Markdown 渲染函数
+        if (typeof renderBubbleMarkdown === 'function') {
+            renderBubbleMarkdown(aB, msg.content);
+        } else {
+            aB.textContent = msg.content;
+        }
+        aRow.appendChild(aWho);
+        aRow.appendChild(aB);
+        thread.appendChild(aRow);
+      }
+    });
+    scrollToBottom(scrollBox, true);
+  };
+
+  // 启动时，如果有历史记录，则渲染并标记为已初始化
+  setTimeout(() => {
+    if (conversationHistory.length > 0) {
+      renderHistoryToUI();
+      initialized = true;
+    }
+  }, 800);
 
   /* [PATCH:delete-v10] */
   // ================= 数据结构与存储 =================
@@ -7088,6 +7150,13 @@ settingsObserver = new MutationObserver((mutations) => {
       uRow.appendChild(uB);
       thread.appendChild(uRow);
       appendText(uB, userText, scrollBox);
+      const uNow = new Date();
+      const uTimeStr = uNow.getHours().toString().padStart(2, '0') + ':' + uNow.getMinutes().toString().padStart(2, '0');
+      const uTime = document.createElement('div');
+      uTime.className = 'msg-time';
+      uTime.style.cssText = 'font-size: 11px; color: #999; text-align: right; margin-top: 4px; margin-right: 8px;';
+      uTime.textContent = uTimeStr;
+      uRow.appendChild(uTime);
       scrollToBottom(scrollBox, true);
 
       aRow = document.createElement('div');
@@ -7101,6 +7170,13 @@ settingsObserver = new MutationObserver((mutations) => {
       myBubble.className = 'real-bubble a';
       aRow.appendChild(aWho);
       aRow.appendChild(myBubble);
+      const aNow = new Date();
+      const aTimeStr = aNow.getHours().toString().padStart(2, '0') + ':' + aNow.getMinutes().toString().padStart(2, '0');
+      const aTime = document.createElement('div');
+      aTime.className = 'msg-time';
+      aTime.style.cssText = 'font-size: 11px; color: #999; text-align: left; margin-top: 4px; margin-left: 8px;';
+      aTime.textContent = aTimeStr;
+      aRow.appendChild(aTime);
       thread.appendChild(aRow);
 
       statusEl = document.createElement('span');
@@ -7110,7 +7186,14 @@ settingsObserver = new MutationObserver((mutations) => {
 
       const workerURL = 'https://trianon-workbench.morning-mouse-3ac4.workers.dev/api/chat';
 
-      const nextMessages = [...history, { role: 'user', content: userText }];
+      let cleanHistory = history;
+        if (cleanHistory.length > 0 && cleanHistory[cleanHistory.length - 1].role === 'user') {
+            cleanHistory = cleanHistory.slice(0, -1);
+        }
+        history = cleanHistory;
+        const nextMessages = [...cleanHistory, { role: 'user', content: userText }];
+            conversationHistory = nextMessages;
+            if (window.saveHistory) window.saveHistory();
 
       const res = await fetch(workerURL, {
           method: 'POST',
@@ -7156,7 +7239,13 @@ settingsObserver = new MutationObserver((mutations) => {
               renderBubbleMarkdown(myBubble, text);
               scrollToBottom(scrollBox);
               conversationHistory = [...nextMessages, { role: 'assistant', content: text }];
-              if (conversationHistory.length > 40) conversationHistory = conversationHistory.slice(-40);
+              if (conversationHistory.length > 40) {
+              if (conversationHistory[0] && conversationHistory[0].role === 'system') {
+                conversationHistory = [conversationHistory[0], ...conversationHistory.slice(-39)];
+              } else {
+                conversationHistory = conversationHistory.slice(-40);
+              }
+            }
           } else {
               throw new Error('无法解析响应内容');
           }
@@ -7183,7 +7272,13 @@ settingsObserver = new MutationObserver((mutations) => {
           renderBubbleMarkdown(myBubble, fullReply);
           scrollToBottom(scrollBox);
           conversationHistory = [...nextMessages, { role: 'assistant', content: fullReply }];
-          if (conversationHistory.length > 40) conversationHistory = conversationHistory.slice(-40);
+          if (conversationHistory.length > 40) {
+              if (conversationHistory[0] && conversationHistory[0].role === 'system') {
+                conversationHistory = [conversationHistory[0], ...conversationHistory.slice(-39)];
+              } else {
+                conversationHistory = conversationHistory.slice(-40);
+              }
+            }
       } else if (!hasContent && statusEl.parentNode) {
           statusEl.textContent = '（未返回内容）';
       }
@@ -8526,6 +8621,53 @@ return He}()
   };
 })();
 /* MD-INLINE-END */
+
+/* 动态更新顶部日期 */
+(function updateTopDate(){
+  const d = new Date();
+  const month = d.getMonth() + 1;
+  const date = d.getDate();
+  let timeOfDay = '日间';
+  const hr = d.getHours();
+  if (hr < 6) timeOfDay = '凌晨';
+  else if (hr < 12) timeOfDay = '早晨';
+  else if (hr < 18) timeOfDay = '午后';
+  else timeOfDay = '夜';
+  const txt = `今日 · ${month}月${date}日 · ${timeOfDay}`;
+  
+  let tries = 0;
+  function apply(){
+    const sep = document.getElementById('rkSep');
+    if (sep) {
+      sep.innerHTML = `<span>${txt}</span>`;
+    } else if (tries < 20) {
+      tries++;
+      setTimeout(apply, 200);
+    }
+  }
+  apply();
+})();
+
+  // 绑定输入框加号的新建会话功能
+  setTimeout(() => {
+    const plusBtn = document.querySelector('.pill.plus');
+    if (plusBtn && !plusBtn.__boundNewChat) {
+      plusBtn.addEventListener('click', newChat);
+      plusBtn.__boundNewChat = true;
+    }
+  }, 1000);
+
+  // 强制给加号绑定点击事件（事件代理）
+  document.body.addEventListener('click', function(e) {
+    const plusBtn = e.target.closest('.pill.plus');
+    if (plusBtn) {
+      if (window.newChat) {
+        window.newChat();
+      } else {
+        console.warn('window.newChat is still missing');
+      }
+    }
+  });
 
 </script><script>
 (()=>{

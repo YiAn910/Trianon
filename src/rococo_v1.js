@@ -483,6 +483,7 @@ const sendNow=txt=>{txt=(txt||ci.value||'').trim()||window.__rkPrompt;if(busy())
   const cs=curSlip();if(cs)cs.textContent=LIVE_TITLE;railOn(-1);
   showView('live',{exitEmpty:fromEmpty})};
 ci.addEventListener('input',()=>field.classList.toggle('has',!!ci.value));
+(()=>{if(ci.tagName!=='TEXTAREA')return;const _sync=()=>{if(!ci.value.trim()){ci.style.height='22px';return;}ci.style.height='auto';ci.style.height=Math.min(Math.max(ci.scrollHeight,22),120)+'px'};['input','change','paste','focus'].forEach(ev=>ci.addEventListener(ev,()=>setTimeout(_sync,10)));window.addEventListener('resize',_sync);_sync()})();
 ci.addEventListener('keydown',e=>{if(e.key==='Enter'&&!e.shiftKey&&!e.isComposing){e.preventDefault();sendNow()}});
 field.addEventListener('click',e=>{if(!e.target.closest('.mchip,.pill'))ci.focus({preventScroll:true})});
 send.addEventListener('click',()=>sendNow());
@@ -617,8 +618,144 @@ window.__rk={get T(){return T},SCRIPT,DEC,frame,start,reset,decideA,decideQ,show
     return { thread, scrollBox };
   };
 
+  /* [PATCH:delete-v10] */
   // ================= 数据结构与存储 =================
-  const getData = () => {
+    // === 洛可可自定义确认弹窗（Global） ===
+  if (!document.getElementById('rococo-confirm-style')) {
+    const st = document.createElement('style');
+    st.id = 'rococo-confirm-style';
+    st.textContent = `
+      .rococo-confirm-overlay {
+        position: fixed; inset: 0;
+        background: rgba(230, 235, 245, 0.45);
+        backdrop-filter: blur(6px); -webkit-backdrop-filter: blur(6px);
+        z-index: 999999;
+        display: flex; align-items: center; justify-content: center;
+        opacity: 0; pointer-events: none;
+        transition: all 0.3s cubic-bezier(0.2, 0.8, 0.2, 1);
+      }
+      .rococo-confirm-overlay.on { opacity: 1; pointer-events: auto; }
+      .rococo-confirm-box {
+        background: #FBFCFE;
+        border-radius: 16px;
+        padding: 28px 32px;
+        box-shadow: 0 16px 40px rgba(46, 59, 104, 0.15), 0 0 0 1px rgba(124, 141, 181, 0.2);
+        width: 90%; max-width: 380px;
+        text-align: center;
+        transform: translateY(20px) scale(0.95);
+        transition: all 0.3s cubic-bezier(0.2, 0.8, 0.2, 1);
+        position: relative;
+        overflow: hidden;
+      }
+      .rococo-confirm-box::before {
+        content: ""; position: absolute; inset: 0;
+        border: 1px dashed rgba(124, 141, 181, 0.3);
+        border-radius: inherit; pointer-events: none;
+        margin: 6px;
+      }
+      .rococo-confirm-overlay.on .rococo-confirm-box { transform: translateY(0) scale(1); }
+      .rococo-confirm-title {
+        font-size: 18px; font-weight: 600; color: #2E3A63;
+        margin-bottom: 12px; letter-spacing: 0.05em;
+        font-family: "Cormorant Garamond", "Noto Serif CJK SC", serif;
+      }
+      .rococo-confirm-msg {
+        font-size: 14.5px; color: #5B6C93; margin-bottom: 24px;
+        line-height: 1.6; padding: 0 10px;
+      }
+      .rococo-confirm-actions {
+        display: flex; gap: 16px; justify-content: center;
+      }
+      .rococo-confirm-btn {
+        padding: 8px 24px; border-radius: 8px; font-size: 14px; font-weight: 500;
+        cursor: pointer; transition: all 0.2s; user-select: none;
+        font-family: inherit; letter-spacing: 0.05em;
+      }
+      .rococo-confirm-cancel {
+        background: transparent; border: 1px solid rgba(124, 141, 181, 0.4);
+        color: #7C8DB5;
+      }
+      .rococo-confirm-cancel:hover { background: rgba(124, 141, 181, 0.08); color: #2E3A63; border-color: #2E3A63; }
+      .rococo-confirm-ok {
+        background: #5B6C93; border: 1px solid #5B6C93; color: #FFFFFF;
+        box-shadow: 0 4px 12px rgba(91, 108, 147, 0.25);
+      }
+      .rococo-confirm-ok:hover { background: #2E3A63; border-color: #2E3A63; transform: translateY(-1px); box-shadow: 0 6px 16px rgba(91, 108, 147, 0.35); }
+    `;
+    document.head.appendChild(st);
+  }
+
+  function showRococoConfirm(msg, onConfirm) {
+    let overlay = document.getElementById('rococo-confirm-overlay');
+    if (!overlay) {
+      overlay = document.createElement('div');
+      overlay.id = 'rococo-confirm-overlay';
+      overlay.className = 'rococo-confirm-overlay';
+      overlay.innerHTML = `
+        <div class="rococo-confirm-box">
+          <div class="rococo-confirm-title">确认操作</div>
+          <div class="rococo-confirm-msg"></div>
+          <div class="rococo-confirm-actions">
+            <div class="rococo-confirm-btn rococo-confirm-cancel">取消</div>
+            <div class="rococo-confirm-btn rococo-confirm-ok">确定</div>
+          </div>
+        </div>
+      `;
+      document.body.appendChild(overlay);
+      overlay.onclick = (e) => {
+        if (e.target === overlay && overlay._close) overlay._close();
+      };
+    }
+
+    const msgEl = overlay.querySelector('.rococo-confirm-msg');
+    const btnCancel = overlay.querySelector('.rococo-confirm-cancel');
+    const btnOk = overlay.querySelector('.rococo-confirm-ok');
+
+    msgEl.textContent = msg;
+
+    const onKey = (e) => {
+      if (e.key === 'Escape') {
+        e.preventDefault();
+        if (overlay._close) overlay._close();
+      }
+    };
+
+    const close = () => {
+      overlay.classList.remove('on');
+      document.removeEventListener('keydown', onKey);
+      overlay._close = null;
+    };
+    overlay._close = close;
+
+    document.addEventListener('keydown', onKey);
+
+    btnCancel.onclick = (e) => { e.stopPropagation(); close(); };
+    btnOk.onclick = (e) => { 
+      e.stopPropagation(); 
+      close(); 
+      if (onConfirm) onConfirm(); 
+    };
+
+    setTimeout(() => { overlay.classList.add('on'); }, 10);
+  }
+
+// 注入全局样式（仅一次）
+if (!document.getElementById('tri-del-style')) {
+  const st = document.createElement('style');
+  st.id = 'tri-del-style';
+  st.textContent = `
+    .md-row .tri-del-btn { opacity: 0; pointer-events: none; transition: all 0.2s; }
+    .md-row:hover .tri-del-btn, .md-row.on .tri-del-btn, .md-row.kb .tri-del-btn { opacity: 0.5; pointer-events: auto; }
+    .tri-del-btn:hover { opacity: 1 !important; transform: scale(1.15) rotate(90deg); }
+    .tri-del-btn:hover svg { stroke: #A65B68 !important; }
+    @media (hover: none) {
+      .md-row .tri-del-btn { opacity: 0.3; pointer-events: auto; }
+    }
+  `;
+  document.head.appendChild(st);
+}
+
+const getData = () => {
     const str = localStorage.getItem('trianon_workbench_data');
     if (!str) return { providers: [], activeModel: null };
     try { return JSON.parse(str); } catch(e) { return { providers: [], activeModel: null }; }
@@ -695,7 +832,44 @@ window.__rk={get T(){return T},SCRIPT,DEC,frame,start,reset,decideA,decideQ,show
         const tab = document.createElement('div');
         tab.className = 'ptab' + (currentTabId === id ? ' on' : '');
         tab.textContent = label;
-        tab.onclick = () => { currentTabId = id; renderCatalogueFn(); };
+        
+        tab.style.setProperty('-webkit-touch-callout', 'none');
+        tab.style.setProperty('user-select', 'none');
+        
+        let pressTimer = null;
+        let isLongPress = false;
+        const startPress = () => {
+          isLongPress = false;
+          pressTimer = setTimeout(() => {
+            showRococoConfirm('确定要删除预设「' + label + '」以及其下所有 模型吗？', () => {
+            isLongPress = true;
+            const newData = getData();
+            newData.providers = newData.providers.filter(x => x.id !== id);
+            if (newData.activeModel && newData.activeModel.providerId === id) {
+              newData.activeModel = null;
+            }
+            saveData(newData);
+            if (currentTabId === id) currentTabId = 'all';
+            renderCatalogueFn();
+          });
+          }, 600);
+        };
+        const cancelPress = () => { if (pressTimer) clearTimeout(pressTimer); };
+        
+        if (id !== 'all') {
+          tab.addEventListener('touchstart', startPress, {passive: true});
+          tab.addEventListener('touchend', cancelPress);
+          tab.addEventListener('touchmove', cancelPress);
+          tab.addEventListener('touchcancel', cancelPress);
+          tab.addEventListener('mousedown', startPress);
+          tab.addEventListener('mouseup', cancelPress);
+          tab.addEventListener('mouseleave', cancelPress);
+        }
+        
+        tab.onclick = (e) => {
+          if (isLongPress) { e.stopPropagation(); e.preventDefault(); return; }
+          currentTabId = id; renderCatalogueFn();
+        };
         mdTabs.appendChild(tab);
       };
 
@@ -758,8 +932,9 @@ window.__rk={get T(){return T},SCRIPT,DEC,frame,start,reset,decideA,decideQ,show
 
             // 右侧操作区：只有选中时才显示对勾，其余什么都不显示
             const actionDiv = document.createElement('div');
-            actionDiv.style.cssText = 'display: flex; align-items: center; margin-left: auto; margin-right: 12px; width: 20px; height: 20px;';
-            
+            actionDiv.style.cssText = 'display: flex; align-items: center; margin-left: auto; margin-right: 12px; gap: 16px;';
+
+            // 1. 蓝色对勾
             if (isActive) {
               const checkSvg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
               checkSvg.setAttribute('width', '20');
@@ -773,14 +948,137 @@ window.__rk={get T(){return T},SCRIPT,DEC,frame,start,reset,decideA,decideQ,show
               checkSvg.innerHTML = '<polyline points="20 6 9 17 4 12"></polyline>';
               actionDiv.appendChild(checkSvg);
             }
+
+            // 2. 收藏星标
+            if (isActive || m.starred) {
+              const starBtn = document.createElement('div');
+              // 【改进】把 filter 阴影放在外层容器，防止跟随 SVG 一起旋转
+              starBtn.style.cssText = 'cursor: pointer; display: flex; align-items: center; justify-content: center; width: 32px; height: 32px; filter: drop-shadow(0px 3px 8px rgba(76, 93, 136, 0.35));';
+              
+              const starSvg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+              starSvg.setAttribute('viewBox', '0 0 32 32');
+              starSvg.setAttribute('width', '26');
+              starSvg.setAttribute('height', '26');
+              
+              // 【改进】SVG 自身只负责 transform，不再挂 filter
+              const initTransform = m.starred ? 'scale(1) rotate(-15deg)' : 'scale(1) rotate(0deg)';
+              starSvg.style.cssText = `transition: transform 0.15s cubic-bezier(0.175, 0.885, 0.32, 1.275); transform: ${initTransform};`;
+              
+              // 只有选中时才有底色圆
+              if (isActive) {
+                const bgCircle = document.createElementNS('http://www.w3.org/2000/svg', 'circle');
+                bgCircle.setAttribute('cx', '16');
+                bgCircle.setAttribute('cy', '16');
+                bgCircle.setAttribute('r', '15');
+                bgCircle.setAttribute('fill', '#C8D2E1');
+                starSvg.appendChild(bgCircle);
+              }
+
+              // 绝对标准的正五角星路径
+              const dStr = 'M16 4 L19.2 11.6 L27.4 12.3 L21.2 17.7 L23 25.7 L16 21.5 L9 25.7 L10.8 17.7 L4.6 12.3 L12.8 11.6 Z';
+              
+              // 外层加粗白边
+              const starWhite = document.createElementNS('http://www.w3.org/2000/svg', 'path');
+              starWhite.setAttribute('d', dStr);
+              starWhite.setAttribute('fill', 'none');
+              starWhite.setAttribute('stroke', '#FFFFFF');
+              starWhite.setAttribute('stroke-width', '6'); // 从 4.5 调大到 6
+              starWhite.setAttribute('stroke-linejoin', 'round');
+              starSvg.appendChild(starWhite);
+
+              // 内层底色
+              const starInner = document.createElementNS('http://www.w3.org/2000/svg', 'path');
+              starInner.setAttribute('d', dStr);
+              starInner.setAttribute('stroke-width', '1.5');
+              starInner.setAttribute('stroke-linejoin', 'round');
+              
+              if (m.starred) {
+                starInner.setAttribute('fill', '#C5D2E8');
+                starInner.setAttribute('stroke', '#6F82AC');
+              } else {
+                starInner.setAttribute('fill', 'transparent');
+                starInner.setAttribute('stroke', '#9CA8C4');
+              }
+              starSvg.appendChild(starInner);
+
+              // 白色斜杠：往上调一点点
+              if (m.starred) {
+                const slash = document.createElementNS('http://www.w3.org/2000/svg', 'path');
+                slash.setAttribute('d', 'M13 15 L19 10');
+                slash.setAttribute('stroke', '#FFFFFF');
+                slash.setAttribute('stroke-width', '2');
+                slash.setAttribute('stroke-linecap', 'round');
+                starSvg.appendChild(slash);
+              }
+
+              starBtn.appendChild(starSvg);
+
+              // 收藏点击逻辑
+              starBtn.onclick = (e) => {
+                e.stopPropagation();
+                
+                // 点击瞬间向左转
+                starSvg.style.transform = 'scale(1.1) rotate(-30deg)';
+                setTimeout(() => {
+                  starSvg.style.transform = 'scale(1) rotate(-15deg)';
+                }, 150);
+
+                const newData = getData();
+                const tp = newData.providers.find(x => x.id === p.id);
+                if (tp) {
+                  const tm = tp.models.find(x => x.id === m.id);
+                  if (tm) {
+                    tm.starred = !tm.starred;
+                    saveData(newData);
+                    setTimeout(() => { if (typeof renderCatalogueFn === 'function') renderCatalogueFn(); }, 320);
+                  }
+                }
+              };
+              actionDiv.appendChild(starBtn);
+            }
+            
+            const delBtn = document.createElement('div');
+            delBtn.className = 'tri-del-btn';
+            delBtn.style.cssText = 'cursor: pointer; display: flex; align-items: center; justify-content: center; width: 20px; height: 20px; margin-left: 8px;';
+            delBtn.innerHTML = '<svg width="12" height="12" viewBox="0 0 12 12" fill="none" stroke="#7C8DB5" stroke-width="1.2" stroke-linecap="round"><path d="M2,2 L10,10 M10,2 L2,10"/></svg>';
+            
+            delBtn.onclick = (ev) => {
+              ev.stopPropagation();
+              showRococoConfirm('确定要删除模型：' + m.name + ' 吗？', () => {
+                const newData = getData();
+                const pr = newData.providers.find(x => x.id === p.id);
+                if (pr) {
+                  pr.models = pr.models.filter(mm => mm.id !== m.id);
+                  if (newData.activeModel && newData.activeModel.providerId === p.id && newData.activeModel.modelId === m.id) {
+                    newData.activeModel = null;
+                  }
+                  saveData(newData);
+                  if (typeof renderCatalogueFn === 'function') renderCatalogueFn();
+                }
+              });
+            };
+            actionDiv.appendChild(delBtn);
+            
             row.appendChild(actionDiv);
 
+            // 选中模型点击事件
             row.onclick = () => {
               const newData = getData();
               newData.activeModel = { providerId: p.id, modelId: m.id };
               saveData(newData);
-              renderCatalogueFn();
-              document.getElementById('mdl')?.setAttribute('aria-hidden', 'true');
+              
+              // 关闭全屏模型界面
+              const mdl = document.getElementById('mdl');
+              if (mdl) mdl.setAttribute('aria-hidden', 'true');
+              
+              // 强制关闭弹窗
+              const mpop = document.getElementById('mpop');
+              if (mpop) {
+                mpop.setAttribute('aria-hidden', 'true');
+                mpop.classList.remove('on');
+              }
+              
+              if (typeof renderCatalogueFn === 'function') renderCatalogueFn();
             };
             mdList.appendChild(row);
           });
@@ -814,49 +1112,142 @@ window.__rk={get T(){return T},SCRIPT,DEC,frame,start,reset,decideA,decideQ,show
     const injectRows = () => {
       const mv = document.getElementById('mpMv');
       if (!mv) return;
+
+      // 1. 清理所有假数据和我们之前生成的数据
+      mv.querySelectorAll('.mp-row, .mp-injected-row, .mp-empty-row').forEach(el => el.remove());
       
-      mv.querySelectorAll('.mp-row, .tri-preset-row').forEach(el => el.remove());
       const data = getData();
       const active = data.activeModel;
+      
+      // 2. 精准定位到“更多模型”上方
       const header = mv.querySelector('.mp-hd');
-      const targetNode = header ? header.nextSibling : mv.firstChild;
+      let targetNode = header ? header.nextElementSibling : mv.firstElementChild;
+      
+      const allDivs = Array.from(mv.querySelectorAll('div'));
+      const moreDiv = allDivs.find(el => el.textContent.includes('更多模型') && el.children.length === 0);
+      
+      if (moreDiv && moreDiv.parentNode && moreDiv.parentNode !== mv) {
+        const moreParent = moreDiv.parentNode;
+        const tgtOk = targetNode && mv.contains(targetNode) && targetNode !== mv;
+        const tgtAfterMore = tgtOk && (moreParent.compareDocumentPosition(targetNode) & Node.DOCUMENT_POSITION_FOLLOWING);
+        if (!tgtOk || tgtAfterMore) {
+          targetNode = moreParent;
+        }
+      }
 
-      if (data.providers.length === 0) {
+      const safeInsert = (el) => {
+        if (targetNode && targetNode !== mv && mv.contains(targetNode)) {
+          targetNode.parentNode.insertBefore(el, targetNode);
+        } else {
+          mv.appendChild(el);
+        }
+      };
+
+      // 3. 筛选收藏的模型
+      const starredModels = [];
+      (data.providers || []).forEach(p => {
+        (p.models || []).forEach(m => {
+          if (m && m.starred === true) {
+            starredModels.push({ provider: p, model: m });
+          }
+        });
+      });
+
+      if (starredModels.length === 0) {
         const emptyDiv = document.createElement('div');
-        emptyDiv.className = 'mp-c tri-preset-row';
-        emptyDiv.style = "color: #7C8DB5; font-size: 13px; padding: 12px 16px; text-align: center;";
-        emptyDiv.textContent = "暂无模型，请在“更多模型”中配置";
-        mv.insertBefore(emptyDiv, targetNode);
+        emptyDiv.className = 'mp-c mp-empty-row mp-injected-row tri-preset-row';
+        emptyDiv.style.cssText = "color: #7C8DB5; font-size: 13px; padding: 16px; text-align: center;";
+        emptyDiv.textContent = "暂无收藏的模型";
+        safeInsert(emptyDiv);
       } else {
-        // 把保存的模型全列出来，方便快速切
-        data.providers.forEach(p => {
-          p.models.forEach(m => {
-            const row = document.createElement('div');
-            row.className = 'mp-c mp-row tri-preset-row';
-            row.setAttribute('role', 'menuitemradio');
-            const isActive = active && active.providerId === p.id && active.modelId === m.id;
-            row.setAttribute('aria-checked', isActive ? 'true' : 'false');
-            if (isActive) row.classList.add('on');
-            row.style.cursor = 'pointer';
+        starredModels.forEach(item => {
+          const p = item.provider;
+          const m = item.model;
+          
+          const row = document.createElement('div');
+          // 纯净原版类名，绝不覆盖任何内联样式
+          row.className = 'mp-c mp-row mp-injected-row tri-preset-row';
+          row.setAttribute('role', 'menuitemradio');
+          const isActive = active && String(active.providerId) === String(p.id) && String(active.modelId) === String(m.id);
+          
+          row.setAttribute('aria-checked', isActive ? 'true' : 'false');
+          if (isActive) row.classList.add('on');
+          
+          // 原生 <b> 标签
+          const b = document.createElement('b');
+          b.textContent = m.name;
+          row.appendChild(b);
+          // 原版对勾 SVG（与真实 .mp-row 结构一致）
+          const ckSvg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+          ckSvg.setAttribute('class', 'ck');
+          ckSvg.setAttribute('width', '15');
+          ckSvg.setAttribute('height', '13');
+          ckSvg.setAttribute('viewBox', '0 0 15 13');
+          ckSvg.setAttribute('aria-hidden', 'true');
+          const ckPath = document.createElementNS('http://www.w3.org/2000/svg', 'path');
+          ckPath.setAttribute('d', 'M1.8,7.2 C3.3,8.4 4.6,9.8 5.7,11.3 C7.9,7.2 10.6,3.9 13.4,1.6');
+          ckPath.setAttribute('fill', 'none');
+          ckPath.setAttribute('stroke', '#4A5A86');
+          ckPath.setAttribute('stroke-width', '1.55');
+          ckPath.setAttribute('stroke-linecap', 'round');
+          ckPath.setAttribute('stroke-linejoin', 'round');
+          ckSvg.appendChild(ckPath);
+          row.appendChild(ckSvg);
 
-            const b = document.createElement('b');
-            b.textContent = m.name;
-            row.appendChild(b);
+          const delPresetBtn = document.createElement('div');
+          delPresetBtn.className = 'tri-del-btn-preset';
+          delPresetBtn.style.cssText = 'margin-left: 8px; cursor: pointer; display: flex; align-items: center; justify-content: center; width: 18px; height: 18px; opacity: 0.3; transition: all 0.2s;';
+          delPresetBtn.innerHTML = '<svg width="10" height="10" viewBox="0 0 12 12" fill="none" stroke="#7C8DB5" stroke-width="1.2" stroke-linecap="round"><path d="M2,2 L10,10 M10,2 L2,10"/></svg>';
+          delPresetBtn.onmouseenter = () => { delPresetBtn.style.opacity = '1'; delPresetBtn.style.transform = 'rotate(90deg)'; delPresetBtn.querySelector('svg').setAttribute('stroke', '#A65B68'); };
+          delPresetBtn.onmouseleave = () => { delPresetBtn.style.opacity = '0.3'; delPresetBtn.style.transform = 'none'; delPresetBtn.querySelector('svg').setAttribute('stroke', '#7C8DB5'); };
+          
+          delPresetBtn.onclick = (ev) => {
+            ev.stopPropagation();
+            const newData = getData();
+            const pr = newData.providers.find(x => x.id === p.id);
+            if (pr) {
+              const mm = pr.models.find(x => x.id === m.id);
+              if (mm) {
+                mm.starred = false;
+                saveData(newData);
+                if (typeof injectRows === 'function') injectRows();
+              }
+            }
+          };
+          row.appendChild(delPresetBtn);
 
-            row.onclick = () => {
-              const newData = getData();
-              newData.activeModel = { providerId: p.id, modelId: m.id };
-              saveData(newData);
+          // 原生点击逻辑
+          row.onclick = (ev) => {
+            if (ev) ev.stopPropagation();
+            // 立即同步高亮（不等下次打开）
+            const mvEl = document.getElementById('mpMv');
+            if (mvEl) {
+              mvEl.querySelectorAll('.mp-row').forEach(r => {
+                r.classList.remove('on');
+                r.setAttribute('aria-checked', 'false');
+              });
+            }
+            row.classList.add('on');
+            row.setAttribute('aria-checked', 'true');
+
+            const newData = getData();
+            newData.activeModel = { providerId: p.id, modelId: m.id };
+            saveData(newData);
+            
+            if (mpop) {
               mpop.setAttribute('aria-hidden', 'true');
               mpop.classList.remove('on');
-            };
-            mv.insertBefore(row, targetNode);
-          });
+            }
+            
+            if (typeof renderCatalogueFn === 'function') {
+              renderCatalogueFn();
+            }
+          };
+          safeInsert(row);
         });
       }
     };
-
-    settingsObserver = new MutationObserver((mutations) => {
+settingsObserver = new MutationObserver((mutations) => {
       for (let m of mutations) {
         if (m.attributeName === 'aria-hidden' && mpop.getAttribute('aria-hidden') === 'false') {
           injectRows();
@@ -1139,6 +1530,24 @@ window.__rk={get T(){return T},SCRIPT,DEC,frame,start,reset,decideA,decideQ,show
     });
   };
 
+  // [MD-HOOK] Markdown 渲染钩子，先做恒等实现（不改变视觉），验证触发时机
+  if (!window.__trianonRenderMD) {
+    window.__trianonRenderMD = function(rawText) {
+      const div = document.createElement('div');
+      div.textContent = rawText;
+      return div.innerHTML.replace(/\n/g, '<br>');
+    };
+  }
+  const renderBubbleMarkdown = (bubble, rawText) => {
+    if (!bubble || !rawText) return;
+    if (typeof window.__trianonRenderMD !== 'function') return;
+    try {
+      const html = window.__trianonRenderMD(rawText);
+      if (typeof html !== 'string' || html === '') return;
+      bubble.innerHTML = html;
+    } catch (e) { console.warn('[MD] render failed, keep plain text', e); }
+  };
+
   const appendText = (bubble, text, scrollBox) => {
     if (text === undefined || text === null) return;
     bubble.appendChild(document.createTextNode(text));
@@ -1245,7 +1654,8 @@ window.__rk={get T(){return T},SCRIPT,DEC,frame,start,reset,decideA,decideQ,show
           const text = data.choices?.[0]?.message?.content;
           if (text) {
               statusEl.remove();
-              appendText(myBubble, text, scrollBox);
+              renderBubbleMarkdown(myBubble, text);
+              scrollToBottom(scrollBox);
               conversationHistory = [...nextMessages, { role: 'assistant', content: text }];
               if (conversationHistory.length > 40) conversationHistory = conversationHistory.slice(-40);
           } else {
@@ -1271,6 +1681,8 @@ window.__rk={get T(){return T},SCRIPT,DEC,frame,start,reset,decideA,decideQ,show
       for (const line of buffer.split('\n')) handleLine(line);
 
       if (fullReply) {
+          renderBubbleMarkdown(myBubble, fullReply);
+          scrollToBottom(scrollBox);
           conversationHistory = [...nextMessages, { role: 'assistant', content: fullReply }];
           if (conversationHistory.length > 40) conversationHistory = conversationHistory.slice(-40);
       } else if (!hasContent && statusEl.parentNode) {
@@ -1356,6 +1768,9 @@ window.__rk={get T(){return T},SCRIPT,DEC,frame,start,reset,decideA,decideQ,show
   };
 
   window.__real = { chat, destroy };
+  // [FORCE-REAL] 强制走真实请求分支，避免新环境 localStorage 空导致默认 Demo
+  try { localStorage.setItem('trianon_mode', 'real'); } catch (e) {}
+
   
   if (document.readyState === 'loading') {
     document.addEventListener('DOMContentLoaded', () => { 

@@ -1,0 +1,39 @@
+/* ===== rococo v1: one shell, three views (empty / live / past) ===== */
+.stage{position:relative;justify-content:flex-end}
+.vw{position:absolute!important;left:0;right:0;top:0;bottom:var(--cH,132px);visibility:hidden;pointer-events:none}
+.vw.on,.vw.out{visibility:visible}
+.vw.on{pointer-events:auto}
+.vw.out{pointer-events:none}
+.composer{position:relative;z-index:2}
+/* composer: a real line to write on (placeholder stays as approved, typed ink replaces it) */
+.field .ph{position:relative;cursor:text}
+.field .ph .ci{position:absolute;left:0;top:0;width:100%;height:100%;border:0;outline:0;background:none;padding:0;margin:0;
+ font:inherit;font-size:14.5px;font-weight:500;letter-spacing:.03em;color:#2E3A63;caret-color:#5B6C93;padding-right:92px;box-sizing:border-box}
+.field .ph em,.field .ph .pht{transition:opacity .2s}
+.field.has .ph em,.field.has .ph .pht{opacity:0}
+.send{cursor:pointer;outline:none}
+.send:focus-visible img{filter:drop-shadow(0 0 0 rgba(0,0,0,0)) drop-shadow(0 0 4px rgba(91,108,147,.55))}
+/* live row */
+.rk-row .col>.who+*{margin-top:0}
+.rk-row .who{min-height:13px}
+.rk-u .b{white-space:pre-wrap}
+/* dossier: plan rows arrive with the turn */
+.rk-td{display:none}
+.rk-none{max-height:26px}
+/* demo cursor (#play) */
+#rkCur{position:fixed;left:0;top:0;z-index:99999;pointer-events:none;width:22px;height:26px;opacity:0;transform-origin:3px 2px;will-change:transform}
+/* past conversation can be read back with the wheel */
+#thHist,#thLive{will-change:transform}
+@media (prefers-reduced-motion:reduce){.field .ph em,.field .ph .pht{transition:none}}
+.rk-td.rk-on{display:flex}
+#rkCap{max-width:200px;margin-left:auto;margin-right:auto;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+
+
+/* === 终极修复：解除高度封印 + 底部避让空间 === */
+.field, .field .ph { height: auto !important; }
+.field .ph .ci { }
+
+/* === 终极解封：依靠内部内容自然撑开大框 === */
+.field { height: auto !important; min-height: 0 !important; }
+.field .ph { height: auto !important; }
+

@@ -177,8 +177,8 @@ sub1("document.addEventListener('pointerleave',()=>{clearTimeout(tOpen);tOpen=0;
 
 # ---------------------------------------------------------------- composer: a real line to write on, model tag, stop / wait clock
 sub1('<div class="ph"><em>Écrivez-moi</em>说一句话⋯</div>',
-     '<div class="ph"><em>Écrivez-moi</em><span class="pht">说一句话⋯</span>'
-     '<input class="ci" id="ci" type="text" autocomplete="off" spellcheck="false" aria-label="说一句话"></div>')
+     '<div class="ph"><div class="ph-txt"><em>Écrivez-moi</em><span class="pht">说一句话⋯</span></div>'
+     '<textarea class="ci" id="ci" rows="1" autocomplete="off" spellcheck="false" aria-label="说一句话"></textarea></div>')
 sub1('<div class="pill rb blue">@ 文件</div></div>', '<div class="pill rb blue">@ 文件</div>' + S2['CHIP'] + '</div>')
 sub1('<span class="sl">Envoyer</span>', '<span class="sl s0">Envoyer</span><span class="sl s1">Stopper</span><span class="sl s2">Patience</span>' + AP['STOP'])
 sub1('<div class="send">', '<div class="send" role="button" tabindex="0" aria-label="发送">')

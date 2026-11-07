@@ -523,7 +523,7 @@ const trDel=sid=>{
   try{localStorage.setItem(TR_S,JSON.stringify(ss));var m=JSON.parse(localStorage.getItem(TR_T)||'{}');delete m[sid];localStorage.setItem(TR_T,JSON.stringify(m))}catch(e){}
   if(sid===trCurId()){window.saveHistory=function(){};try{localStorage.setItem(TR_ID,'s'+Date.now());localStorage.removeItem(TR_H)}catch(e){}location.reload();return}
   trRender()};
-const trRen=sid=>{
+const trRenOld=sid=>{
   const base=sid===trCurId()?trTitle(trJ(TR_H,[])):((trJ(TR_S,[]).find(x=>x&&x.id===sid)||{}).title||'');
   const v=window.prompt('重命名会话（留空恢复自动标题）',trCT(sid)||base);
   if(v===null)return;
@@ -532,8 +532,66 @@ const trRen=sid=>{
   try{var ss=trJ(TR_S,[]);var it=ss.find(x=>x&&x.id===sid);if(it&&t){it.title=t;localStorage.setItem(TR_S,JSON.stringify(ss))}}catch(e){}
   trRender()};
 let trMenuEl=null;
-const trCloseMenu=()=>{if(trMenuEl){trMenuEl.remove();trMenuEl=null}};
+/* trianon menu v2: paper style + rococo-confirm reuse */
+const trCss=document.createElement('style');trCss.id='trMenuCss';
+trCss.textContent=`
+#trMenu{position:fixed;z-index:99999;min-width:132px;padding:5px;background:rgba(251,249,243,.97);-webkit-backdrop-filter:blur(8px);backdrop-filter:blur(8px);border:1px solid rgba(91,108,147,.28);border-radius:10px;box-shadow:0 10px 28px rgba(46,58,99,.24);transform-origin:top right;animation:trPop .16s cubic-bezier(.2,.8,.3,1)}
+@keyframes trPop{from{opacity:0;transform:translateY(-4px) scale(.96)}to{opacity:1;transform:none}}
+#trMenu .tri{display:flex;align-items:center;gap:9px;padding:10px 12px;border-radius:7px;font-size:13.5px;letter-spacing:.04em;color:#2E3A63;cursor:pointer;-webkit-tap-highlight-color:transparent;user-select:none}
+#trMenu .tri svg{flex:none;opacity:.85}
+#trMenu .tri+.tri{margin-top:1px}
+#trMenu .tri:hover,#trMenu .tri:active{background:rgba(91,108,147,.12)}
+#trMenu .tri.danger{color:#A8475A}
+#trMenu .tri.danger:hover,#trMenu .tri.danger:active{background:rgba(168,71,90,.10)}
+.tr-prompt-input{display:block;width:100%;box-sizing:border-box;margin:2px 0 16px;padding:10px 12px;border:1px solid rgba(91,108,147,.35);border-radius:8px;background:#fff;font:inherit;font-size:14px;color:#2E3A63;outline:none}
+.tr-prompt-input:focus{border-color:#5B6C93;box-shadow:0 0 0 3px rgba(91,108,147,.16)}
+`;
+document.head.appendChild(trCss);
+const TR_ICON_PEN='<svg width="14" height="14" viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round"><path d="M9.6 2.2l2.2 2.2L5 11.2l-2.8.6.6-2.8z"/></svg>';
+const TR_ICON_DEL='<svg width="14" height="14" viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round"><path d="M2.5 4h9M5.5 4V2.6h3V4M3.8 4l.6 7.4h5.2l.6-7.4"/></svg>';
+const trPrompt=(title,val,onOk)=>{
+  const old=document.getElementById('tr-prompt-overlay');if(old)old.remove();
+  const ov=document.createElement('div');ov.id='tr-prompt-overlay';ov.className='rococo-confirm-overlay';
+  ov.innerHTML='<div class="rococo-confirm-box"><div class="rococo-confirm-title"></div><input class="tr-prompt-input" type="text" maxlength="40" placeholder="留空恢复自动标题"><div class="rococo-confirm-actions"><div class="rococo-confirm-btn rococo-confirm-cancel">取消</div><div class="rococo-confirm-btn rococo-confirm-ok">确定</div></div></div>';
+  document.body.appendChild(ov);
+  if(getComputedStyle(ov).position!=='fixed'){ov.remove();const v0=window.prompt('重命名会话（留空恢复自动标题）',val||'');if(v0!==null)onOk(v0);return}
+  ov.querySelector('.rococo-confirm-title').textContent=title;
+  const inp=ov.querySelector('.tr-prompt-input');inp.value=val||'';
+  let onKey=null;
+  const close=()=>{ov.classList.remove('on');if(onKey)document.removeEventListener('keydown',onKey);setTimeout(()=>ov.remove(),300)};
+  const ok=()=>{const v=inp.value;close();onOk(v)};
+  onKey=e=>{if(e.key==='Escape'){e.preventDefault();close()}else if(e.key==='Enter'&&!e.isComposing){e.preventDefault();ok()}};
+  document.addEventListener('keydown',onKey);
+  ov.onclick=e=>{if(e.target===ov)close()};
+  ov.querySelector('.rococo-confirm-cancel').onclick=e=>{e.stopPropagation();close()};
+  ov.querySelector('.rococo-confirm-ok').onclick=e=>{e.stopPropagation();ok()};
+  setTimeout(()=>{ov.classList.add('on');inp.focus();inp.select()},10)};
+const trRen=sid=>{
+  const base=sid===trCurId()?trTitle(trJ(TR_H,[])):((trJ(TR_S,[]).find(x=>x&&x.id===sid)||{}).title||'');
+  trPrompt('重命名会话',trCT(sid)||base,v=>{
+    const t=String(v||'').replace(/\s+/g,' ').trim().slice(0,40);
+    try{var m=JSON.parse(localStorage.getItem(TR_T)||'{}');if(t)m[sid]=t;else delete m[sid];localStorage.setItem(TR_T,JSON.stringify(m))}catch(e){}
+    try{var ss=trJ(TR_S,[]);var it=ss.find(x=>x&&x.id===sid);if(it){it.title=t||trTitle(it.history);localStorage.setItem(TR_S,JSON.stringify(ss))}}catch(e){}
+    trRender()})};
+const trAskDel=sid=>{
+  const msg='删除这个会话？删除后无法恢复。';
+  if(typeof window.showRococoConfirm==='function')window.showRococoConfirm(msg,()=>trDel(sid));
+  else if(window.confirm(msg))trDel(sid)};
 const trOpenMenu=(ses,btn)=>{
+  trCloseMenu();
+  const sid=ses.dataset.sid;
+  const m=document.createElement('div');m.id='trMenu';
+  const add=(label,icon,fn,danger)=>{const b=document.createElement('div');b.className='tri'+(danger?' danger':'');b.setAttribute('role','button');b.innerHTML=icon+'<span></span>';b.lastChild.textContent=label;b.addEventListener('click',ev=>{ev.stopPropagation();trCloseMenu();fn()});m.appendChild(b)};
+  add('重命名',TR_ICON_PEN,()=>trRen(sid),false);
+  add('删除',TR_ICON_DEL,()=>trAskDel(sid),true);
+  document.body.appendChild(m);
+  const r=btn.getBoundingClientRect(),w=m.offsetWidth,h=m.offsetHeight;
+  let x=Math.min(Math.max(8,r.right-w),window.innerWidth-w-8),y=r.bottom+4;
+  if(y+h>window.innerHeight-8)y=Math.max(8,r.top-h-4);
+  m.style.left=x+'px';m.style.top=y+'px';trMenuEl=m};
+
+const trCloseMenu=()=>{if(trMenuEl){trMenuEl.remove();trMenuEl=null}};
+const trOpenMenuOld=(ses,btn)=>{
   trCloseMenu();
   const sid=ses.dataset.sid;
   const m=document.createElement('div');m.id='trMenu';
@@ -837,6 +895,7 @@ window.__rk={get T(){return T},SCRIPT,DEC,frame,start,reset,decideA,decideQ,show
     document.head.appendChild(st);
   }
 
+  window.showRococoConfirm = showRococoConfirm;
   function showRococoConfirm(msg, onConfirm) {
     let overlay = document.getElementById('rococo-confirm-overlay');
     if (!overlay) {

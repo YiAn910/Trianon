@@ -516,6 +516,7 @@ const trRender=()=>{
   box.replaceChildren(frag);
 };
 window.trRender=trRender;
+window.trShowLive=function(){try{showView('live',{instant:true})}catch(e){console.warn('trShowLive failed',e)}};
 const trSwitch=sid=>{
   if(typeof running!=='undefined'&&running)return;
   if(sid===trCurId()){window.__v13toggle&&window.__v13toggle(false);return}
@@ -711,7 +712,7 @@ window.__rk={get T(){return T},SCRIPT,DEC,frame,start,reset,decideA,decideQ,show
   // 启动时，如果有历史记录，则渲染并标记为已初始化
   setTimeout(() => {
     if (conversationHistory.length > 0) {
-      renderHistoryToUI();
+      renderHistoryToUI(); try{window.trShowLive&&window.trShowLive()}catch(e){}
       initialized = true;
     }
   }, 800);

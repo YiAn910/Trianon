@@ -497,8 +497,8 @@ const trJ=(k,d)=>{try{const v=JSON.parse(localStorage.getItem(k));return v==null
 const trCurId=()=>{let id=null;try{id=localStorage.getItem(TR_ID)}catch(e){}if(!id){id='s'+Date.now();try{localStorage.setItem(TR_ID,id)}catch(e){}}return id};
 const trTitle=h=>{const m=(h||[]).find(x=>x&&x.role==='user');if(!m)return '新的对话';let c=m.content;if(Array.isArray(c))c=c.map(p=>(p&&p.text)||'').join('');c=String(c||'').replace(/\s+/g,' ').trim();if(!c)return '新的对话';return c.length>18?c.slice(0,18)+'…':c};
 const trWhen=ts=>{const d=new Date(ts),n=new Date(),p=x=>String(x).padStart(2,'0');return d.toDateString()===n.toDateString()?p(d.getHours())+':'+p(d.getMinutes()):(d.getMonth()+1)+'/'+d.getDate()};
-const trArchive=()=>{const h=trJ(TR_H,[]),id=trCurId();const ss=trJ(TR_S,[]).filter(x=>x&&x.id!==id);if(Array.isArray(h)&&h.length)ss.unshift({id:id,title:trTitle(h),ts:Date.now(),history:h});try{localStorage.setItem(TR_S,JSON.stringify(ss.slice(0,40)))}catch(e){}};
-let trTpl=null;
+const trArchive=()=>{const h=trJ(TR_H,[]),id=trCurId();const ss=trJ(TR_S,[]).filter(x=>x&&x.id!==id);if(Array.isArray(h)&&h.length)ss.unshift({id:id,title:trCT(id)||trTitle(h),ts:Date.now(),history:h});try{localStorage.setItem(TR_S,JSON.stringify(ss.slice(0,40)))}catch(e){}};
+const TR_T='trianon_custom_titles';const trCT=id=>{try{return (JSON.parse(localStorage.getItem(TR_T))||{})[id]||''}catch(e){return ''}};let trTpl=null;
 const trRender=()=>{
   const base=document.querySelector('.dw-ses[data-sid], .dw-ses.cur');
   if(!base)return;
@@ -511,11 +511,49 @@ const trRender=()=>{
       const mo=n.querySelector('.dw-more');if(mo&&mo.parentNode===n)n.insertBefore(w,mo);else n.appendChild(w)}
     return n};
   const frag=document.createDocumentFragment();
-  frag.appendChild(mk(cid,trTitle(ch),'',true));
-  others.forEach(x=>frag.appendChild(mk(x.id,x.title||'新的对话',trWhen(x.ts),false)));
+  frag.appendChild(mk(cid,trCT(cid)||trTitle(ch),'',true));
+  others.forEach(x=>frag.appendChild(mk(x.id,trCT(x.id)||x.title||'新的对话',trWhen(x.ts),false)));
   box.replaceChildren(frag);
 };
 window.trRender=trRender;
+/* trianon session menu: rename / delete */
+const trDel=sid=>{
+  if(typeof running!=='undefined'&&running)return;
+  const ss=trJ(TR_S,[]).filter(x=>x&&x.id!==sid);
+  try{localStorage.setItem(TR_S,JSON.stringify(ss));var m=JSON.parse(localStorage.getItem(TR_T)||'{}');delete m[sid];localStorage.setItem(TR_T,JSON.stringify(m))}catch(e){}
+  if(sid===trCurId()){window.saveHistory=function(){};try{localStorage.setItem(TR_ID,'s'+Date.now());localStorage.removeItem(TR_H)}catch(e){}location.reload();return}
+  trRender()};
+const trRen=sid=>{
+  const base=sid===trCurId()?trTitle(trJ(TR_H,[])):((trJ(TR_S,[]).find(x=>x&&x.id===sid)||{}).title||'');
+  const v=window.prompt('重命名会话（留空恢复自动标题）',trCT(sid)||base);
+  if(v===null)return;
+  const t=v.replace(/\s+/g,' ').trim().slice(0,40);
+  try{var m=JSON.parse(localStorage.getItem(TR_T)||'{}');if(t)m[sid]=t;else delete m[sid];localStorage.setItem(TR_T,JSON.stringify(m))}catch(e){}
+  try{var ss=trJ(TR_S,[]);var it=ss.find(x=>x&&x.id===sid);if(it&&t){it.title=t;localStorage.setItem(TR_S,JSON.stringify(ss))}}catch(e){}
+  trRender()};
+let trMenuEl=null;
+const trCloseMenu=()=>{if(trMenuEl){trMenuEl.remove();trMenuEl=null}};
+const trOpenMenu=(ses,btn)=>{
+  trCloseMenu();
+  const sid=ses.dataset.sid;
+  const m=document.createElement('div');m.id='trMenu';
+  m.style.cssText='position:fixed;z-index:99999;min-width:112px;padding:4px;background:#FBF9F3;border:1px solid #C9D2E6;border-radius:6px;box-shadow:0 6px 18px rgba(60,75,120,.22);font-size:13px;color:#3A4A76;';
+  const add=(label,fn,danger)=>{const b=document.createElement('div');b.textContent=label;b.setAttribute('role','button');
+    b.style.cssText='padding:9px 12px;border-radius:4px;cursor:pointer;'+(danger?'color:#B04A5A;':'');
+    b.addEventListener('click',ev=>{ev.stopPropagation();trCloseMenu();fn()});m.appendChild(b)};
+  add('重命名',()=>trRen(sid),false);
+  add('删除',()=>{if(window.confirm('删除这个会话？删除后无法恢复。'))trDel(sid)},true);
+  document.body.appendChild(m);
+  const r=btn.getBoundingClientRect(),w=m.offsetWidth,h=m.offsetHeight;
+  let x=Math.min(Math.max(8,r.right-w),window.innerWidth-w-8),y=r.bottom+4;
+  if(y+h>window.innerHeight-8)y=Math.max(8,r.top-h-4);
+  m.style.left=x+'px';m.style.top=y+'px';trMenuEl=m};
+document.addEventListener('click',e=>{
+  if(trMenuEl&&trMenuEl.contains(e.target))return;
+  const mo=e.target.closest&&e.target.closest('.dw-more');
+  if(mo){const ses=mo.closest('.dw-ses[data-sid]');if(ses){e.preventDefault();e.stopPropagation();trOpenMenu(ses,mo);return}}
+  trCloseMenu()},true);
+
 window.trShowLive=function(){try{showView('live',{instant:true})}catch(e){console.warn('trShowLive failed',e)}};
 window.trFmt=function(ts){var d=new Date(ts),n=new Date(),p=function(x){return String(x).padStart(2,'0')},t=p(d.getHours())+':'+p(d.getMinutes());return d.toDateString()===n.toDateString()?t:(d.getMonth()+1)+'/'+d.getDate()+' '+t};
 window.trDecorate=function(){

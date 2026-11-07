@@ -42,6 +42,7 @@ S2 = defs('build_sessions_v2.py', '# ---------- assemble', patch=[
     # the live conversation is the drawer's current slip; the approved v8 conversation is a finished session
     ("(P1, True, [('重构聊天工作台的流式渲染', '刚刚', 'cur'),", "(P1, True, [('新的对话', '刚刚', 'cur'),"),
     ("(P1, True, [('阶段 2 · 契约冻结与评审', '10/22'),", "(P1, True, [('重构聊天工作台的流式渲染', '10/25'), ('阶段 2 · 契约冻结与评审', '10/22'),"),
+    ("nact = len(PINNED)", "PINNED = []; ACTIVE = [(P1, True, [('新的对话', '刚刚', 'cur')])]; DONE = []\nnact = len(PINNED)"),
 ])
 TV = defs('build_tools_v2.py', '# ---------------------------------------------------------------- model layer')
 AP = defs('build_approval_v2.py', 'import json\npre =')

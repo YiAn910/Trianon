@@ -6015,6 +6015,21 @@ const trRender=()=>{
 };
 window.trRender=trRender;
 window.trShowLive=function(){try{showView('live',{instant:true})}catch(e){console.warn('trShowLive failed',e)}};
+window.trFmt=function(ts){var d=new Date(ts),n=new Date(),p=function(x){return String(x).padStart(2,'0')},t=p(d.getHours())+':'+p(d.getMinutes());return d.toDateString()===n.toDateString()?t:(d.getMonth()+1)+'/'+d.getDate()+' '+t};
+window.trDecorate=function(){
+  var h=[];try{h=JSON.parse(localStorage.getItem('trianon_current_history')||'[]')}catch(e){}
+  h=h.filter(function(m){return m&&(m.role==='user'||m.role==='assistant')});
+  var rows=[].slice.call(document.querySelectorAll('.real-row'));
+  if(rows.length!==h.length){console.warn('decorate skipped: rows',rows.length,'msgs',h.length);return}
+  rows.forEach(function(row,i){
+    var m=h[i];
+    if(row.querySelector('.msg-time'))return;
+    if(m.role==='assistant'&&m.model){var who=row.querySelector('.real-who');if(who)who.textContent=String(m.model).toUpperCase()}
+    if(m.ts){var t=document.createElement('div');t.className='msg-time';
+      t.style.cssText='font-size: 11px; color: #999; margin-top: 4px; '+(m.role==='user'?'text-align: right; margin-right: 8px;':'text-align: left; margin-left: 8px;');
+      t.textContent=window.trFmt(m.ts);row.appendChild(t)}
+  });
+};
 const trSwitch=sid=>{
   if(typeof running!=='undefined'&&running)return;
   if(sid===trCurId()){window.__v13toggle&&window.__v13toggle(false);return}
@@ -6022,9 +6037,9 @@ const trSwitch=sid=>{
   const t=trJ(TR_S,[]).find(x=>x&&x.id===sid);if(!t)return;
   try{localStorage.setItem(TR_H,JSON.stringify(t.history||[]));localStorage.setItem(TR_ID,sid)}catch(e){return}
   location.reload()};
-const trNew=()=>{trArchive();try{localStorage.setItem(TR_ID,'s'+Date.now());localStorage.removeItem(TR_H)}catch(e){}trRender()};
+const trNew=()=>{if(typeof running!=='undefined'&&running)return false;trArchive();window.saveHistory=function(){};try{localStorage.setItem(TR_ID,'s'+Date.now());localStorage.removeItem(TR_H)}catch(e){}location.reload();return true};
 trRender();
-const newChat=()=>{trNew(); conversationHistory = []; try{localStorage.removeItem('trianon_current_history');}catch(e){} const thread=document.getElementById('thLive'); if(thread){thread.querySelectorAll('.real-row').forEach(el=>el.remove());} if(typeof initialized!=='undefined'){initialized=false;} ci.value='';field.classList.remove('has');const cs=curSlip();if(cs)cs.textContent='新的对话';railOn(0);
+const newChat=()=>{if(trNew()===false)return; conversationHistory = []; try{localStorage.removeItem('trianon_current_history');}catch(e){} const thread=document.getElementById('thLive'); if(thread){thread.querySelectorAll('.real-row').forEach(el=>el.remove());} if(typeof initialized!=='undefined'){initialized=false;} ci.value='';field.classList.remove('has');const cs=curSlip();if(cs)cs.textContent='新的对话';railOn(0);
   const wasLive=view==='live';showView('empty');clearTimeout(resetT);
   if(wasLive&&!RM.matches)resetT=setTimeout(()=>{if(view!=='live')reset()},320);else reset()};
 window.newChat = newChat;
@@ -6211,7 +6226,7 @@ window.__rk={hold:v=>{frozen=v},resume:v=>{frozen=null;t0=now()-v},get running()
   // 启动时，如果有历史记录，则渲染并标记为已初始化
   setTimeout(() => {
     if (conversationHistory.length > 0) {
-      renderHistoryToUI(); try{window.trShowLive&&window.trShowLive()}catch(e){}
+      renderHistoryToUI(); try{window.trShowLive&&window.trShowLive()}catch(e){} try{window.trDecorate&&window.trDecorate()}catch(e){}
       initialized = true;
     }
   }, 800);
@@ -7228,14 +7243,14 @@ settingsObserver = new MutationObserver((mutations) => {
             cleanHistory = cleanHistory.slice(0, -1);
         }
         history = cleanHistory;
-        const nextMessages = [...cleanHistory, { role: 'user', content: userText }];
+        const nextMessages = [...cleanHistory, { role: 'user', content: userText, ts: (typeof uNow!=='undefined'?uNow:new Date()).getTime() }];
             conversationHistory = nextMessages;
             if (window.saveHistory) window.saveHistory();
 
       const res = await fetch(workerURL, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ messages: nextMessages, baseURL: config.provider.baseURL, apiKey: config.provider.apiKey, model: config.model.id }),
+          body: JSON.stringify({ messages: nextMessages.map(function(m){return {role:m.role,content:m.content}}), baseURL: config.provider.baseURL, apiKey: config.provider.apiKey, model: config.model.id }),
           signal: myCtrl.signal
       });
 
@@ -7275,7 +7290,7 @@ settingsObserver = new MutationObserver((mutations) => {
               statusEl.remove();
               renderBubbleMarkdown(myBubble, text);
               scrollToBottom(scrollBox);
-              conversationHistory = [...nextMessages, { role: 'assistant', content: text }]; try{window.saveHistory&&window.saveHistory()}catch(e){} /*TR_SAVE*/
+              conversationHistory = [...nextMessages, { role: 'assistant', content: text, ts: (typeof aNow!=='undefined'?aNow:new Date()).getTime(), model: (typeof config!=='undefined'&&config&&config.model&&config.model.name)||'' }]; try{window.saveHistory&&window.saveHistory()}catch(e){} /*TR_SAVE*/
               if (conversationHistory.length > 40) {
               if (conversationHistory[0] && conversationHistory[0].role === 'system') {
                 conversationHistory = [conversationHistory[0], ...conversationHistory.slice(-39)];
@@ -7308,7 +7323,7 @@ settingsObserver = new MutationObserver((mutations) => {
       if (fullReply) {
           renderBubbleMarkdown(myBubble, fullReply);
           scrollToBottom(scrollBox);
-          conversationHistory = [...nextMessages, { role: 'assistant', content: fullReply }]; try{window.saveHistory&&window.saveHistory()}catch(e){} /*TR_SAVE*/
+          conversationHistory = [...nextMessages, { role: 'assistant', content: fullReply, ts: (typeof aNow!=='undefined'?aNow:new Date()).getTime(), model: (typeof config!=='undefined'&&config&&config.model&&config.model.name)||'' }]; try{window.saveHistory&&window.saveHistory()}catch(e){} /*TR_SAVE*/
           if (conversationHistory.length > 40) {
               if (conversationHistory[0] && conversationHistory[0].role === 'system') {
                 conversationHistory = [conversationHistory[0], ...conversationHistory.slice(-39)];

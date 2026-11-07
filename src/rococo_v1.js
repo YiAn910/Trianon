@@ -491,13 +491,48 @@ send.addEventListener('keydown',e=>{if(e.key==='Enter'||e.key===' '){e.preventDe
 const PRE=['帮我整理一下这个仓库：目录、脚本和没用的依赖。',window.__rkPrompt,'随便聊聊：流式渲染最容易在哪儿卡住？'];
 V.empty.querySelectorAll('.tag').forEach((t,k)=>t.addEventListener('click',()=>sendNow(PRE[k])));
 let resetT=0;
-const newChat=()=>{conversationHistory = []; try{localStorage.removeItem('trianon_current_history');}catch(e){} const thread=document.getElementById('thLive'); if(thread){thread.querySelectorAll('.real-row').forEach(el=>el.remove());} if(typeof initialized!=='undefined'){initialized=false;} ci.value='';field.classList.remove('has');const cs=curSlip();if(cs)cs.textContent='新的对话';railOn(0);
+/* ===== trianon multi-session (localStorage + reload) ===== */
+const TR_H='trianon_current_history',TR_ID='trianon_current_id',TR_S='trianon_sessions';
+const trJ=(k,d)=>{try{const v=JSON.parse(localStorage.getItem(k));return v==null?d:v}catch(e){return d}};
+const trCurId=()=>{let id=null;try{id=localStorage.getItem(TR_ID)}catch(e){}if(!id){id='s'+Date.now();try{localStorage.setItem(TR_ID,id)}catch(e){}}return id};
+const trTitle=h=>{const m=(h||[]).find(x=>x&&x.role==='user');if(!m)return '新的对话';let c=m.content;if(Array.isArray(c))c=c.map(p=>(p&&p.text)||'').join('');c=String(c||'').replace(/\s+/g,' ').trim();if(!c)return '新的对话';return c.length>18?c.slice(0,18)+'…':c};
+const trWhen=ts=>{const d=new Date(ts),n=new Date(),p=x=>String(x).padStart(2,'0');return d.toDateString()===n.toDateString()?p(d.getHours())+':'+p(d.getMinutes()):(d.getMonth()+1)+'/'+d.getDate()};
+const trArchive=()=>{const h=trJ(TR_H,[]),id=trCurId();const ss=trJ(TR_S,[]).filter(x=>x&&x.id!==id);if(Array.isArray(h)&&h.length)ss.unshift({id:id,title:trTitle(h),ts:Date.now(),history:h});try{localStorage.setItem(TR_S,JSON.stringify(ss.slice(0,40)))}catch(e){}};
+let trTpl=null;
+const trRender=()=>{
+  const base=document.querySelector('.dw-ses[data-sid], .dw-ses.cur');
+  if(!base)return;
+  if(!trTpl){trTpl=base.cloneNode(true);trTpl.removeAttribute('data-sid')}
+  const box=base.parentElement;if(!box)return;
+  const cid=trCurId(),ch=trJ(TR_H,[]),others=trJ(TR_S,[]).filter(x=>x&&x.id!==cid);
+  const mk=(id,title,when,isCur)=>{const n=trTpl.cloneNode(true);n.dataset.sid=id;n.querySelector('.dw-t').textContent=title;
+    if(!isCur){n.classList.remove('cur');const stk=n.querySelector('.dw-stk');if(stk)stk.remove();
+      const w=document.createElement('span');w.className='dw-when';w.textContent=when;
+      const mo=n.querySelector('.dw-more');if(mo&&mo.parentNode===n)n.insertBefore(w,mo);else n.appendChild(w)}
+    return n};
+  const frag=document.createDocumentFragment();
+  frag.appendChild(mk(cid,trTitle(ch),'',true));
+  others.forEach(x=>frag.appendChild(mk(x.id,x.title||'新的对话',trWhen(x.ts),false)));
+  box.replaceChildren(frag);
+};
+window.trRender=trRender;
+const trSwitch=sid=>{
+  if(typeof running!=='undefined'&&running)return;
+  if(sid===trCurId()){window.__v13toggle&&window.__v13toggle(false);return}
+  trArchive();
+  const t=trJ(TR_S,[]).find(x=>x&&x.id===sid);if(!t)return;
+  try{localStorage.setItem(TR_H,JSON.stringify(t.history||[]));localStorage.setItem(TR_ID,sid)}catch(e){return}
+  location.reload()};
+const trNew=()=>{trArchive();try{localStorage.setItem(TR_ID,'s'+Date.now());localStorage.removeItem(TR_H)}catch(e){}trRender()};
+trRender();
+const newChat=()=>{trNew(); conversationHistory = []; try{localStorage.removeItem('trianon_current_history');}catch(e){} const thread=document.getElementById('thLive'); if(thread){thread.querySelectorAll('.real-row').forEach(el=>el.remove());} if(typeof initialized!=='undefined'){initialized=false;} ci.value='';field.classList.remove('has');const cs=curSlip();if(cs)cs.textContent='新的对话';railOn(0);
   const wasLive=view==='live';showView('empty');clearTimeout(resetT);
   if(wasLive&&!RM.matches)resetT=setTimeout(()=>{if(view!=='live')reset()},320);else reset()};
 window.newChat = newChat;
 railIts[0].addEventListener('click',newChat);
 $('drw').addEventListener('click',e=>{
   const ses=e.target.closest('.dw-ses');
+  if(ses&&ses.dataset.sid&&!e.target.closest('.dw-more')){trSwitch(ses.dataset.sid);return}
   if(ses&&!e.target.closest('.dw-more')){
     if(ses.classList.contains('cur'))showView(running?'live':'empty');
     else{histTitle=ses.querySelector('.dw-t').textContent;showView('hist')}
@@ -625,6 +660,7 @@ window.__rk={get T(){return T},SCRIPT,DEC,frame,start,reset,decideA,decideQ,show
   } catch(e) {}
 
   window.saveHistory = function() {
+    setTimeout(function(){try{window.trRender&&window.trRender()}catch(e){}},0);
     try {
       localStorage.setItem('trianon_current_history', JSON.stringify(conversationHistory));
     } catch(e) {}
@@ -1739,7 +1775,7 @@ settingsObserver = new MutationObserver((mutations) => {
               statusEl.remove();
               renderBubbleMarkdown(myBubble, text);
               scrollToBottom(scrollBox);
-              conversationHistory = [...nextMessages, { role: 'assistant', content: text }];
+              conversationHistory = [...nextMessages, { role: 'assistant', content: text }]; try{window.saveHistory&&window.saveHistory()}catch(e){} /*TR_SAVE*/
               if (conversationHistory.length > 40) {
               if (conversationHistory[0] && conversationHistory[0].role === 'system') {
                 conversationHistory = [conversationHistory[0], ...conversationHistory.slice(-39)];
@@ -1772,7 +1808,7 @@ settingsObserver = new MutationObserver((mutations) => {
       if (fullReply) {
           renderBubbleMarkdown(myBubble, fullReply);
           scrollToBottom(scrollBox);
-          conversationHistory = [...nextMessages, { role: 'assistant', content: fullReply }];
+          conversationHistory = [...nextMessages, { role: 'assistant', content: fullReply }]; try{window.saveHistory&&window.saveHistory()}catch(e){} /*TR_SAVE*/
           if (conversationHistory.length > 40) {
               if (conversationHistory[0] && conversationHistory[0].role === 'system') {
                 conversationHistory = [conversationHistory[0], ...conversationHistory.slice(-39)];
